@@ -14,8 +14,24 @@ logger = logging.getLogger(__name__)
 BASE = f"https://api.telegram.org/bot{MARKETING_BOT_TOKEN}"
 
 # In-memory state per user
-# state: None | "quiz_N" (0-5) | "awaiting_name"
+# state: None | "quiz" | "awaiting_name"
 user_state: dict[int, dict] = {}
+
+# Допустимые источники из deep links
+KNOWN_SOURCES = {
+    "tiktok": "TikTok",
+    "instagram": "Instagram",
+    "youtube": "YouTube",
+    "telegram": "Telegram",
+    "reels": "Instagram",
+    "shorts": "YouTube",
+}
+
+def _parse_source(start_param: str | None) -> str:
+    """Определяет источник по параметру deep link (/start tiktok → TikTok)."""
+    if not start_param:
+        return "Прямой"
+    return KNOWN_SOURCES.get(start_param.lower(), "Прямой")
 
 # Cache the guide file_id after first upload (avoids re-uploading on every send)
 _guide_file_id: str | None = None
@@ -160,14 +176,21 @@ async def _handle_message(message: dict) -> None:
         await _do_broadcast(broadcast_text, waitlist_only=True)
         return
 
-    # /start
+    # /start [source] — поддержка deep links
     if text == "/start" or text.startswith("/start "):
-        await _welcome(chat_id, user_id, username)
+        start_param = text[7:].strip() if text.startswith("/start ") else None
+        source = _parse_source(start_param)
+        # Сохраняем источник в state чтобы использовать при всех дальнейших действиях
+        if user_id not in user_state:
+            user_state[user_id] = {}
+        user_state[user_id]["source"] = source
+        await _welcome(chat_id, user_id, username, source=source)
         return
 
     # Кодовое слово для гайда (регистронезависимо)
     if text.lower() == GUIDE_KEYWORD.lower():
-        await _deliver_guide(chat_id, user_id, username, source="кодовое слово")
+        source = user_state.get(user_id, {}).get("source", "Прямой")
+        await _deliver_guide(chat_id, user_id, username, source=source, request="гайд")
         return
 
     # Awaiting name for club registration
@@ -195,13 +218,13 @@ async def _handle_callback(cb: dict) -> None:
     await _api("answerCallbackQuery", json={"callback_query_id": cb["id"]})
 
     if data == "get_guide":
-        await _deliver_guide(chat_id, user_id, username, source="кнопка меню")
+        source = user_state.get(user_id, {}).get("source", "Прямой")
+        await _deliver_guide(chat_id, user_id, username, source=source, request="кнопка меню")
 
     elif data == "start_quiz":
         await _start_quiz(chat_id, user_id)
 
     elif data.startswith("quiz_"):
-        # quiz_a_0, quiz_b_2, etc.
         parts = data.split("_")
         answer = parts[1]       # 'a' or 'b'
         q_index = int(parts[2]) # 0-5
@@ -213,7 +236,15 @@ async def _handle_callback(cb: dict) -> None:
 
 # ─── Flow handlers ────────────────────────────────────────────────────────────
 
-async def _welcome(chat_id: int, user_id: int, username: str | None) -> None:
+async def _welcome(chat_id: int, user_id: int, username: str | None,
+                   source: str = "Прямой") -> None:
+    await notion_leads.upsert_lead(
+        user_id=user_id,
+        username=username,
+        status="Зашёл",
+        source=source,
+        request="/start",
+    )
     await send(
         chat_id,
         "Привет! Я бот Юлии Гоголевой — психолога и автора канала "
@@ -227,7 +258,8 @@ async def _welcome(chat_id: int, user_id: int, username: str | None) -> None:
     )
 
 
-async def _deliver_guide(chat_id: int, user_id: int, username: str | None, source: str) -> None:
+async def _deliver_guide(chat_id: int, user_id: int, username: str | None,
+                         source: str = "Прямой", request: str = "гайд") -> None:
     ok = await send_guide(chat_id)
     if ok:
         await send(
@@ -242,13 +274,20 @@ async def _deliver_guide(chat_id: int, user_id: int, username: str | None, sourc
             username=username,
             status="Получил гайд",
             source=source,
+            request=request,
         )
     else:
         await send(chat_id, "Произошла ошибка при отправке файла. Попробуйте позже.")
 
 
 async def _start_quiz(chat_id: int, user_id: int) -> None:
-    user_state[user_id] = {"step": "quiz", "answers": [], "q_index": 0}
+    prev = user_state.get(user_id, {})
+    user_state[user_id] = {
+        "step": "quiz",
+        "answers": [],
+        "q_index": 0,
+        "source": prev.get("source", "Прямой"),  # сохраняем источник
+    }
     await send(
         chat_id,
         "🧠 <b>Тест на тип привязанности</b>\n\n"
@@ -281,7 +320,8 @@ async def _process_quiz_answer(
     else:
         # Quiz done — show result
         attachment_type = calculate_result(state["answers"])
-        user_state[user_id] = {"step": None, "attachment_type": attachment_type}
+        source = state.get("source", "Прямой")
+        user_state[user_id] = {"step": None, "attachment_type": attachment_type, "source": source}
 
         result = RESULTS[attachment_type]
         await send(
@@ -298,12 +338,15 @@ async def _process_quiz_answer(
             username=username,
             attachment_type=attachment_type,
             status="Получил гайд",
-            source="тест",
+            source=source,
+            request="тест",
         )
 
 
 async def _ask_name_for_club(chat_id: int, user_id: int) -> None:
-    user_state[user_id] = {"step": "awaiting_name"}
+    prev = user_state.get(user_id, {})
+    user_state[user_id] = {"step": "awaiting_name", "source": prev.get("source", "Прямой"),
+                           "attachment_type": prev.get("attachment_type")}
     await send(
         chat_id,
         "🔔 <b>Клуб «Кубики Жизни»</b>\n\n"
@@ -316,8 +359,10 @@ async def _ask_name_for_club(chat_id: int, user_id: int) -> None:
 async def _save_club_registration(
     chat_id: int, user_id: int, username: str | None, name: str
 ) -> None:
-    user_state[user_id] = {"step": None}
-    attachment_type = user_state.get(user_id, {}).get("attachment_type")
+    prev = user_state.get(user_id, {})
+    attachment_type = prev.get("attachment_type")
+    source = prev.get("source", "Прямой")
+    user_state[user_id] = {"step": None, "source": source, "attachment_type": attachment_type}
 
     await notion_leads.upsert_lead(
         user_id=user_id,
@@ -325,7 +370,8 @@ async def _save_club_registration(
         name=name,
         attachment_type=attachment_type,
         status="Предзапись",
-        source="клуб",
+        source=source,
+        request="клуб",
     )
 
     await send(
@@ -342,6 +388,7 @@ async def _save_club_registration(
         f"🔔 <b>Новая предзапись в клуб!</b>\n\n"
         f"👤 {name} ({tg_link})\n"
         f"🆔 user_id: <code>{user_id}</code>\n"
+        f"📲 Источник: {source}\n"
         f"🧠 Тип привязанности: {attachment_type or 'не проходил тест'}"
     )
 

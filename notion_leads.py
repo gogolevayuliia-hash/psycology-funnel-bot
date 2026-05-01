@@ -4,9 +4,10 @@ Schema:
   Name (title)         — имя введённое пользователем
   Telegram ID (number) — user_id
   Username (rich_text) — @username
-  Тип (select)         — Тревожный / Избегающий / Надёжный / Не проходил тест
+  Тип (select)         — Тревожный / Избегающий / Надёжный
   Статус (select)      — Предзапись / Получил гайд / Купил трипваер
-  Источник (rich_text) — /start / гайд / кнопка
+  Источник (select)    — TikTok / Instagram / YouTube / Telegram / Прямой
+  Запрос (rich_text)   — гайд / /start / кнопка меню / тест / клуб
   Дата (date)          — ISO timestamp
 """
 import httpx
@@ -26,15 +27,15 @@ async def upsert_lead(
     name: str | None = None,
     attachment_type: str | None = None,
     status: str = "Получил гайд",
-    source: str = "/start",
+    source: str = "Прямой",   # Источник: TikTok / Instagram / YouTube / Telegram / Прямой
+    request: str = "/start",  # Запрос: конкретное действие/слово
 ) -> str:
     """Create or update a lead. Returns page_id."""
-    # Check if lead already exists
     existing = await _find_lead(user_id)
     if existing:
         return await _update_lead(existing, name=name, attachment_type=attachment_type,
-                                  status=status)
-    return await _create_lead(user_id, username, name, attachment_type, status, source)
+                                  status=status, request=request)
+    return await _create_lead(user_id, username, name, attachment_type, status, source, request)
 
 
 async def _find_lead(user_id: int) -> str | None:
@@ -49,14 +50,15 @@ async def _find_lead(user_id: int) -> str | None:
         return results[0]["id"] if results else None
 
 
-async def _create_lead(user_id, username, name, attachment_type, status, source) -> str:
+async def _create_lead(user_id, username, name, attachment_type, status, source, request) -> str:
     now = datetime.now(timezone.utc).isoformat()
     props = {
         "Name": {"title": [{"text": {"content": name or username or str(user_id)}}]},
         "Telegram ID": {"number": user_id},
         "Username": {"rich_text": [{"text": {"content": f"@{username}" if username else ""}}]},
         "Статус": {"select": {"name": status}},
-        "Источник": {"rich_text": [{"text": {"content": source}}]},
+        "Источник": {"select": {"name": source}},
+        "Запрос": {"rich_text": [{"text": {"content": request}}]},
         "Дата": {"date": {"start": now}},
     }
     if attachment_type:
@@ -71,7 +73,8 @@ async def _create_lead(user_id, username, name, attachment_type, status, source)
         return r.json().get("id", "")
 
 
-async def _update_lead(page_id: str, name=None, attachment_type=None, status=None) -> str:
+async def _update_lead(page_id: str, name=None, attachment_type=None, status=None,
+                       request=None) -> str:
     props = {}
     if name:
         props["Name"] = {"title": [{"text": {"content": name}}]}
@@ -79,6 +82,8 @@ async def _update_lead(page_id: str, name=None, attachment_type=None, status=Non
         props["Тип"] = {"select": {"name": attachment_type}}
     if status:
         props["Статус"] = {"select": {"name": status}}
+    if request:
+        props["Запрос"] = {"rich_text": [{"text": {"content": request}}]}
 
     async with httpx.AsyncClient(timeout=10) as client:
         await client.patch(
