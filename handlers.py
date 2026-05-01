@@ -247,8 +247,8 @@ async def _welcome(chat_id: int, user_id: int, username: str | None,
     )
     await send(
         chat_id,
-        "Привет! Я бот Юлии Гоголевой — психолога и автора канала "
-        f"<a href=\"{CHANNEL_URL}\">@cubesoflife</a>.\n\n"
+        "Привет! Я бот Юлии Гоголевой — автора канала "
+        "<a href=\"https://t.me/gogolevajuls\">Гоголева | ПсихоЛогично 🧪</a>\n\n"
         "Здесь вы можете:\n"
         "▪️ Получить бесплатный гайд по эмоциям\n"
         "▪️ Пройти тест на тип привязанности\n"
