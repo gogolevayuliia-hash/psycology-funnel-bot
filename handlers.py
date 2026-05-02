@@ -85,24 +85,24 @@ async def send_photo(chat_id: int, image_path: str, caption: str = "",
         return False
 
 
-async def send_guide(chat_id: int) -> bool:
+async def send_guide(chat_id: int, reply_markup=None) -> bool:
     global _guide_file_id
     caption = (
         "📄 <b>Гайд «Как перестать срываться на близких»</b>\n\n"
         "Физиология срывов: почему они случаются и как с этим работать "
-        "на уровне тела, а не силы воли."
+        "на уровне тела, а не силы воли.\n\n"
+        "Пока читаете — есть ещё 8 вопросов, которые добавят картину. "
+        "Тест на тип привязанности напрямую связан с тем, как вы ведёте себя в конфликте."
     )
+    payload = {"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     try:
         if _guide_file_id:
-            r = await _api("sendDocument", json={
-                "chat_id": chat_id, "document": _guide_file_id,
-                "caption": caption, "parse_mode": "HTML",
-            })
+            r = await _api("sendDocument", json={**payload, "document": _guide_file_id})
         else:
             with open(GUIDE_PDF_PATH, "rb") as f:
-                r = await _api("sendDocument",
-                                data={"chat_id": chat_id, "caption": caption,
-                                      "parse_mode": "HTML"},
+                r = await _api("sendDocument", data=payload,
                                 files={"document": f})
             if r.get("ok"):
                 _guide_file_id = r["result"]["document"]["file_id"]
@@ -327,9 +327,9 @@ async def _welcome(chat_id: int, user_id: int, username: str | None,
     await send(
         chat_id,
         "Это бот Юлии Гоголевой — автора канала "
-        f"<a href=\"{CHANNEL_URL}\">Гоголева | ПсихоЛогично 🧪</a>\n\n"
+        "<a href=\"https://t.me/gogolevajuls\">Гоголева | ПсихоЛогично 🧪</a>\n\n"
         "Здесь — инструменты для тех, кто хочет разбираться в себе и в отношениях. "
-        "С научной базой, без шаманства.\n\n"
+        "С научной базой.\n\n"
         "📄 Гайд «Как перестать срываться на близких» — бесплатно\n"
         "🧠 Тест на тип привязанности — 8 вопросов, результат с разбором\n"
         "🔒 Предзапись в клуб «Кубики Жизни»\n\n"
@@ -340,16 +340,8 @@ async def _welcome(chat_id: int, user_id: int, username: str | None,
 
 async def _deliver_guide(chat_id: int, user_id: int, username: str | None,
                           source: str, request: str) -> None:
-    ok = await send_guide(chat_id)
+    ok = await send_guide(chat_id, reply_markup=_after_guide_kb())
     if ok:
-        await send(
-            chat_id,
-            "Держите. Внутри — физиология срывов: почему они случаются и как с этим "
-            "работать на уровне тела, а не силы воли.\n\n"
-            "Пока читаете — есть ещё 8 вопросов, которые добавят картину. "
-            "Тест на тип привязанности напрямую связан с тем, как вы ведёте себя в конфликте.",
-            reply_markup=_after_guide_kb(),
-        )
         await notion_leads.upsert_lead(user_id=user_id, username=username,
                                        status="Получил гайд", source=source, request=request)
     else:
