@@ -173,8 +173,8 @@ def _dep_quiz_kb(q_index: int):
 def _anxious_result_kb():
     return {"inline_keyboard": [
         [{"text": "📊 Пройти расширенный тест", "callback_data": "start_dep_quiz"}],
-        [{"text": "💳 Купить уроки — 990 ₽", "url": TRIPWIRE_URL}],
-        [{"text": "🔒 Записаться в клуб", "callback_data": "join_club"}],
+        [{"text": "📋 Хочу узнать про «Практикум»", "callback_data": "join_protocol"}],
+        [{"text": "🔒 Предзапись в клуб", "callback_data": "join_club"}],
     ]}
 
 
