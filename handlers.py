@@ -13,7 +13,20 @@ from deprivation_quiz import (
     QUESTIONS as DEP_Q, RESULTS as DEP_R, PROTOCOL_DESCRIPTION,
     calculate_result as dep_result,
 )
+from texts import (
+    WELCOME, GUIDE_CAPTION, CLUB_INVITE, CLUB_CONFIRMED,
+    PSYCHOLOGIST_TEXT, PSYCHOLOGIST_URL, PROTOCOL_CONFIRMED,
+    FALLBACK, SITE_URL,
+)
 import notion_leads
+
+LETTERS = ["А", "Б", "В", "Г", "Д"]
+
+
+def _build_question_text(q: dict) -> str:
+    """Форматирует вопрос с вариантами ответов в тексте сообщения."""
+    options_text = "\n".join(opt[0] for opt in q["options"])
+    return f"{q['text']}\n\n{options_text}"
 
 logger = logging.getLogger(__name__)
 BASE = f"https://api.telegram.org/bot{MARKETING_BOT_TOKEN}"
@@ -87,13 +100,7 @@ async def send_photo(chat_id: int, image_path: str, caption: str = "",
 
 async def send_guide(chat_id: int, reply_markup=None) -> bool:
     global _guide_file_id
-    caption = (
-        "📄 <b>Гайд «Как перестать срываться на близких»</b>\n\n"
-        "Физиология срывов: почему они случаются и как с этим работать "
-        "на уровне тела, а не силы воли.\n\n"
-        "Пока читаете — есть ещё 8 вопросов, которые добавят картину. "
-        "Тест на тип привязанности напрямую связан с тем, как вы ведёте себя в конфликте."
-    )
+    caption = GUIDE_CAPTION
     payload = {"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"}
     if reply_markup:
         payload["reply_markup"] = reply_markup
@@ -125,7 +132,9 @@ def _main_menu():
     return {"inline_keyboard": [
         [{"text": "📄 Получить гайд бесплатно", "callback_data": "get_guide"}],
         [{"text": "🧠 Пройти тест на тип привязанности", "callback_data": "start_quiz"}],
-        [{"text": "🔒 Хочу в клуб «Кубики Жизни»", "callback_data": "join_club"}],
+        [{"text": "🔒 Предзапись в клуб «Кубики Жизни»", "callback_data": "join_club"}],
+        [{"text": "🩺 Записаться к психологу", "callback_data": "psychologist"}],
+        [{"text": "🌐 Сайт", "url": SITE_URL}],
     ]}
 
 
@@ -138,18 +147,18 @@ def _after_guide_kb():
 
 def _quiz_kb(q_index: int):
     q = QUIZ_Q[q_index]
-    return {"inline_keyboard": [
-        [{"text": opt[0], "callback_data": f"q_{q_index}_{i}"}]
-        for i, opt in enumerate(q["options"])
-    ]}
+    return {"inline_keyboard": [[
+        {"text": LETTERS[i], "callback_data": f"q_{q_index}_{i}"}
+        for i in range(len(q["options"]))
+    ]]}
 
 
 def _dep_quiz_kb(q_index: int):
     q = DEP_Q[q_index]
-    return {"inline_keyboard": [
-        [{"text": opt[0], "callback_data": f"dq_{q_index}_{i}"}]
-        for i, opt in enumerate(q["options"])
-    ]}
+    return {"inline_keyboard": [[
+        {"text": LETTERS[i], "callback_data": f"dq_{q_index}_{i}"}
+        for i in range(len(q["options"]))
+    ]]}
 
 
 def _anxious_result_kb():
@@ -187,11 +196,18 @@ def _dep_result_kb():
     ]}
 
 
+def _psychologist_kb():
+    return {"inline_keyboard": [
+        [{"text": "✍️ Написать ассистенту", "url": PSYCHOLOGIST_URL}],
+    ]}
+
+
 def _fallback_kb():
     return {"inline_keyboard": [
         [{"text": "📄 Гайд", "callback_data": "get_guide"},
          {"text": "🧠 Тест", "callback_data": "start_quiz"},
          {"text": "🔒 Клуб", "callback_data": "join_club"}],
+        [{"text": "🩺 К психологу", "callback_data": "psychologist"}],
     ]}
 
 
@@ -266,17 +282,7 @@ async def _handle_message(message: dict) -> None:
         return
 
     # ── Fallback ──
-    await send(
-        chat_id,
-        "Я бот — свободный текст не понимаю.\n\n"
-        "Напишите одно слово:\n"
-        "<b>гайд</b> — пришлю бесплатный материал\n"
-        "<b>тест</b> — запустим тест на тип привязанности\n"
-        "<b>клуб</b> — расскажу про предзапись\n"
-        "<b>урок</b> — про видеопрактикум\n\n"
-        "Или нажмите кнопку 👇",
-        reply_markup=_fallback_kb(),
-    )
+    await send(chat_id, FALLBACK, reply_markup=_fallback_kb())
 
 
 async def _handle_callback(cb: dict) -> None:
@@ -316,6 +322,9 @@ async def _handle_callback(cb: dict) -> None:
     elif data == "join_protocol":
         await _ask_name_for_protocol(chat_id, user_id)
 
+    elif data == "psychologist":
+        await send(chat_id, PSYCHOLOGIST_TEXT, reply_markup=_psychologist_kb())
+
 
 # ── Flows ────────────────────────────────────────────────────────────────────
 
@@ -324,18 +333,7 @@ async def _welcome(chat_id: int, user_id: int, username: str | None,
     await notion_leads.upsert_lead(user_id=user_id, username=username,
                                    status="Зашёл", source=source, request="/start")
     await send_photo(chat_id, "images/julia.jpg")
-    await send(
-        chat_id,
-        "Это бот Юлии Гоголевой — автора канала "
-        "<a href=\"https://t.me/gogolevajuls\">Гоголева | ПсихоЛогично 🧪</a>\n\n"
-        "Здесь — инструменты для тех, кто хочет разбираться в себе и в отношениях. "
-        "С научной базой.\n\n"
-        "📄 Гайд «Как перестать срываться на близких» — бесплатно\n"
-        "🧠 Тест на тип привязанности — 8 вопросов, результат с разбором\n"
-        "🔒 Предзапись в клуб «Кубики Жизни»\n\n"
-        "Выбирайте 👇",
-        reply_markup=_main_menu(),
-    )
+    await send(chat_id, WELCOME, reply_markup=_main_menu())
 
 
 async def _deliver_guide(chat_id: int, user_id: int, username: str | None,
@@ -361,7 +359,7 @@ async def _start_quiz(chat_id: int, user_id: int) -> None:
                          "Но сначала нужно знать, с чем именно работать.\n\n"
                          "8 вопросов. Выбирайте первую реакцию — не ту, которой гордитесь."
                      ))
-    await send(chat_id, QUIZ_Q[0]["text"], reply_markup=_quiz_kb(0))
+    await send(chat_id, _build_question_text(QUIZ_Q[0]), reply_markup=_quiz_kb(0))
 
 
 async def _process_quiz_answer(chat_id: int, user_id: int, username: str | None,
@@ -377,7 +375,7 @@ async def _process_quiz_answer(chat_id: int, user_id: int, username: str | None,
 
     if next_idx < len(QUIZ_Q):
         state["q_index"] = next_idx
-        await send(chat_id, QUIZ_Q[next_idx]["text"], reply_markup=_quiz_kb(next_idx))
+        await send(chat_id, _build_question_text(QUIZ_Q[next_idx]), reply_markup=_quiz_kb(next_idx))
     else:
         attachment_type = quiz_result(state["q_answers"])
         source = state.get("source", "Прямой")
@@ -436,7 +434,7 @@ async def _start_dep_quiz(chat_id: int, user_id: int) -> None:
             "откликается телесно, а не то, что кажется правильным."
         ),
     )
-    await send(chat_id, DEP_Q[0]["text"], reply_markup=_dep_quiz_kb(0))
+    await send(chat_id, _build_question_text(DEP_Q[0]), reply_markup=_dep_quiz_kb(0))
 
 
 async def _process_dep_answer(chat_id: int, user_id: int, username: str | None,
@@ -451,7 +449,7 @@ async def _process_dep_answer(chat_id: int, user_id: int, username: str | None,
 
     if next_idx < len(DEP_Q):
         state["dep_index"] = next_idx
-        await send(chat_id, DEP_Q[next_idx]["text"], reply_markup=_dep_quiz_kb(next_idx))
+        await send(chat_id, _build_question_text(DEP_Q[next_idx]), reply_markup=_dep_quiz_kb(next_idx))
     else:
         total = sum(state["dep_answers"])
         level = dep_result(total)
@@ -478,16 +476,7 @@ async def _process_dep_answer(chat_id: int, user_id: int, username: str | None,
 async def _ask_name_for_club(chat_id: int, user_id: int) -> None:
     prev = user_state.get(user_id, {})
     user_state[user_id] = {**prev, "step": "awaiting_name"}
-    await send(
-        chat_id,
-        "🔒 <b>Клуб «Кубики Жизни»</b>\n\n"
-        "Закрытое сообщество, где каждый месяц разбираем одну сферу жизни — "
-        "на составляющие, с упражнениями, с реальной базой. "
-        "Без мотивации и воздушных шариков.\n\n"
-        "Сейчас идёт предзапись: <b>740 ₽/мес</b> вместо 990 ₽ — "
-        "цена фиксируется навсегда для тех, кто записывается сейчас.\n\n"
-        "Как вас зовут?"
-    )
+    await send(chat_id, CLUB_INVITE)
 
 
 async def _save_club_registration(chat_id: int, user_id: int,
@@ -503,13 +492,7 @@ async def _save_club_registration(chat_id: int, user_id: int,
         attachment_type=attachment_type, status="Предзапись",
         source=source, request="клуб", deprivation_level=dep_level,
     )
-    await send(
-        chat_id,
-        f"✅ {name}, записала вас.\n\n"
-        "Как только откроем набор — напишу первой.\n\n"
-        f"Пока читайте канал — <a href=\"{CHANNEL_URL}\">@gogolevajuls</a>. "
-        "Там каждую неделю что-нибудь, от чего становится понятнее.",
-    )
+    await send(chat_id, CLUB_CONFIRMED.format(name=name))
     tg = f"@{username}" if username else f"id{user_id}"
     await notify_admin(
         f"🔔 <b>Новая предзапись в клуб!</b>\n\n"
@@ -546,11 +529,7 @@ async def _save_protocol_registration(chat_id: int, user_id: int,
         attachment_type=attachment_type, status="Предзапись практикум",
         source=source, request="практикум", deprivation_level=dep_level,
     )
-    await send(
-        chat_id,
-        f"✅ {name}, записала.\n\n"
-        "Как только практикум будет готов — пришлю ссылку первой.",
-    )
+    await send(chat_id, PROTOCOL_CONFIRMED.format(name=name))
     tg = f"@{username}" if username else f"id{user_id}"
     await notify_admin(
         f"📊 <b>Предзапись на практикум!</b>\n\n"
