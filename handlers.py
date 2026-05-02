@@ -434,16 +434,17 @@ async def _start_dep_quiz(chat_id: int, user_id: int) -> None:
     prev = user_state.get(user_id, {})
     user_state[user_id] = {**prev, "step": "dep_quiz",
                             "dep_answers": [], "dep_index": 0}
-    await send(
-        chat_id,
-        "📊 <b>Расширенный тест: эмоциональная депривация</b>\n\n"
-        "Тревожная привязанность часто идёт вместе с эмоциональной депривацией "
-        "разной глубины. 10 вопросов помогут понять, где именно и насколько.\n\n"
-        "Результат — конкретная схема, не общее описание. Выбирайте то, что "
-        "откликается телесно, а не то, что кажется правильным.\n\n"
-        + DEP_Q[0]["text"],
-        reply_markup=_dep_quiz_kb(0),
+    await send_photo(
+        chat_id, "images/dep_cover.png",
+        caption=(
+            "📊 <b>Расширенный тест: эмоциональная депривация</b>\n\n"
+            "Тревожная привязанность часто идёт вместе с эмоциональной депривацией "
+            "разной глубины. 10 вопросов помогут понять, где именно и насколько.\n\n"
+            "Результат — конкретная схема, не общее описание. Выбирайте то, что "
+            "откликается телесно, а не то, что кажется правильным."
+        ),
     )
+    await send(chat_id, DEP_Q[0]["text"], reply_markup=_dep_quiz_kb(0))
 
 
 async def _process_dep_answer(chat_id: int, user_id: int, username: str | None,
