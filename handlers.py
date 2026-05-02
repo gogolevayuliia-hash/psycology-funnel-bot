@@ -141,6 +141,7 @@ def _main_menu():
     return {"inline_keyboard": [
         [{"text": "📄 Получить гайд бесплатно", "callback_data": "get_guide"}],
         [{"text": "🧠 Пройти тест на тип привязанности", "callback_data": "start_quiz"}],
+        [{"text": "📊 Тест на эмоциональную депривацию", "callback_data": "start_dep_quiz"}],
         [{"text": "🔒 Предзапись в клуб «Кубики Жизни»", "callback_data": "join_club"}],
         [{"text": "🩺 Записаться к психологу", "callback_data": "psychologist"}],
         [{"text": "🌐 Сайт", "url": SITE_URL}],
