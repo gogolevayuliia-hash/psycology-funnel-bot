@@ -171,7 +171,8 @@ def _anxious_result_kb():
 
 def _avoidant_result_kb():
     return {"inline_keyboard": [
-        [{"text": "🔒 Записаться в клуб «Кубики Жизни»", "callback_data": "join_club"}],
+        [{"text": "💳 Купить уроки — 990 ₽", "url": TRIPWIRE_URL}],
+        [{"text": "🔒 Записаться в клуб", "callback_data": "join_club"}],
     ]}
 
 
@@ -397,20 +398,9 @@ async def _show_quiz_result(chat_id: int, user_id: int, username: str | None,
     else:
         kb = _secure_result_kb()
 
-    # Extra text for avoidant — club pitch
-    extra = ""
-    if attachment_type == "Избегающий":
-        extra = (
-            "\n\nОтдельного урока для избегающего типа пока нет — он в разработке.\n\n"
-            "Зато в клубе «Кубики Жизни» есть то, что работает именно для вас: "
-            "разбор механик избегания, практики постепенного открытия без потери "
-            "ощущения себя, и рефлексия в формате, который не давит. "
-            "Каждый модуль построен так, чтобы вы двигались в своём темпе."
-        )
-
     await send_photo(
         chat_id, r["image"],
-        caption=f"<b>{r['title']}</b>\n\n{r['text']}{extra}",
+        caption=f"<b>{r['title']}</b>\n\n{r['text']}",
         reply_markup=kb,
     )
     await notion_leads.upsert_lead(user_id=user_id, username=username,
