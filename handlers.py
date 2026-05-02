@@ -229,6 +229,24 @@ def _lesson_kb():
     ]}
 
 
+def _persistent_menu_kb():
+    """Постоянная клавиатура — всегда видна внизу чата."""
+    return {
+        "keyboard": [[{"text": "🏠 Меню"}]],
+        "resize_keyboard": True,
+        "persistent": True,
+    }
+
+
+async def _show_persistent_menu(chat_id: int) -> None:
+    """Показывает постоянную кнопку Меню (один раз при старте)."""
+    await _api("sendMessage", json={
+        "chat_id": chat_id,
+        "text": "Кнопка «Меню» закреплена внизу — возвращайтесь сюда в любой момент 👇",
+        "reply_markup": _persistent_menu_kb(),
+    })
+
+
 # ── Update router ────────────────────────────────────────────────────────────
 
 async def handle_update(update: dict) -> None:
@@ -257,12 +275,22 @@ async def _handle_message(message: dict) -> None:
             await _do_broadcast(text[len("/broadcast_waitlist "):].strip(), waitlist_only=True)
             return
 
-    # ── /start [source] ──
+    # ── /start [param] ──
     if low == "/start" or low.startswith("/start "):
         param = text[7:].strip() if low.startswith("/start ") else None
         source = _parse_source(param)
         user_state[user_id] = {**state, "source": source}
-        await _welcome(chat_id, user_id, username, source)
+        # Глубокая ссылка: t.me/bot?start=deptest → сразу тест на депривацию
+        if param == "deptest":
+            await _show_persistent_menu(chat_id)
+            await _start_dep_quiz(chat_id, user_id)
+        else:
+            await _welcome(chat_id, user_id, username, source)
+        return
+
+    # ── Постоянная кнопка «Меню» ──
+    if low in ("меню", "🏠 меню"):
+        await send(chat_id, "Выбирайте 👇", reply_markup=_main_menu())
         return
 
     # ── Keywords ──
@@ -343,6 +371,7 @@ async def _welcome(chat_id: int, user_id: int, username: str | None,
                    source: str = "Прямой") -> None:
     await notion_leads.upsert_lead(user_id=user_id, username=username,
                                    status="Зашёл", source=source, request="/start")
+    await _show_persistent_menu(chat_id)
     await send_photo(chat_id, "images/julia.jpg")
     await send(chat_id, WELCOME, reply_markup=_main_menu())
 
