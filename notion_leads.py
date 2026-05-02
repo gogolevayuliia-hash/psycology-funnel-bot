@@ -4,10 +4,11 @@ Schema:
   Name (title)         — имя введённое пользователем
   Telegram ID (number) — user_id
   Username (rich_text) — @username
-  Тип (select)         — Тревожный / Избегающий / Надёжный
+  Тип (select)         — Тревожный / Избегающий / Надёжный / Тревожно-избегающий
   Статус (select)      — Предзапись / Получил гайд / Купил трипваер
   Источник (select)    — TikTok / Instagram / YouTube / Telegram / Прямой
   Запрос (rich_text)   — гайд / /start / кнопка меню / тест / клуб
+  Депривация (select)  — Д1 / Д2 / Д3 / Д4
   Дата (date)          — ISO timestamp
 """
 import httpx
@@ -27,15 +28,18 @@ async def upsert_lead(
     name: str | None = None,
     attachment_type: str | None = None,
     status: str = "Получил гайд",
-    source: str = "Прямой",   # Источник: TikTok / Instagram / YouTube / Telegram / Прямой
-    request: str = "/start",  # Запрос: конкретное действие/слово
+    source: str = "Прямой",           # Источник: TikTok / Instagram / YouTube / Telegram / Прямой
+    request: str = "/start",          # Запрос: конкретное действие/слово
+    deprivation_level: str | None = None,  # Депривация: Д1 / Д2 / Д3 / Д4
 ) -> str:
     """Create or update a lead. Returns page_id."""
     existing = await _find_lead(user_id)
     if existing:
         return await _update_lead(existing, name=name, attachment_type=attachment_type,
-                                  status=status, request=request)
-    return await _create_lead(user_id, username, name, attachment_type, status, source, request)
+                                  status=status, request=request,
+                                  deprivation_level=deprivation_level)
+    return await _create_lead(user_id, username, name, attachment_type, status, source, request,
+                               deprivation_level)
 
 
 async def _find_lead(user_id: int) -> str | None:
@@ -50,7 +54,8 @@ async def _find_lead(user_id: int) -> str | None:
         return results[0]["id"] if results else None
 
 
-async def _create_lead(user_id, username, name, attachment_type, status, source, request) -> str:
+async def _create_lead(user_id, username, name, attachment_type, status, source, request,
+                       deprivation_level=None) -> str:
     now = datetime.now(timezone.utc).isoformat()
     props = {
         "Name": {"title": [{"text": {"content": name or username or str(user_id)}}]},
@@ -63,6 +68,8 @@ async def _create_lead(user_id, username, name, attachment_type, status, source,
     }
     if attachment_type:
         props["Тип"] = {"select": {"name": attachment_type}}
+    if deprivation_level:
+        props["Депривация"] = {"select": {"name": deprivation_level}}
 
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.post(
@@ -74,7 +81,7 @@ async def _create_lead(user_id, username, name, attachment_type, status, source,
 
 
 async def _update_lead(page_id: str, name=None, attachment_type=None, status=None,
-                       request=None) -> str:
+                       request=None, deprivation_level=None) -> str:
     props = {}
     if name:
         props["Name"] = {"title": [{"text": {"content": name}}]}
@@ -84,6 +91,8 @@ async def _update_lead(page_id: str, name=None, attachment_type=None, status=Non
         props["Статус"] = {"select": {"name": status}}
     if request:
         props["Запрос"] = {"rich_text": [{"text": {"content": request}}]}
+    if deprivation_level:
+        props["Депривация"] = {"select": {"name": deprivation_level}}
 
     async with httpx.AsyncClient(timeout=10) as client:
         await client.patch(
