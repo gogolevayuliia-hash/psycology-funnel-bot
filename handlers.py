@@ -407,11 +407,9 @@ async def _show_quiz_result(chat_id: int, user_id: int, username: str | None,
     else:
         kb = _secure_result_kb()
 
-    await send_photo(
-        chat_id, r["image"],
-        caption=f"<b>{r['title']}</b>\n\n{r['text']}",
-        reply_markup=kb,
-    )
+    # Фото отдельно — без ограничения в 1024 символа на подпись
+    await send_photo(chat_id, r["image"])
+    await send(chat_id, f"<b>{r['title']}</b>\n\n{r['text']}", reply_markup=kb)
     await notion_leads.upsert_lead(user_id=user_id, username=username,
                                    attachment_type=attachment_type,
                                    status="Получил гайд", source=source, request="тест")
@@ -457,11 +455,8 @@ async def _process_dep_answer(chat_id: int, user_id: int, username: str | None,
         user_state[user_id] = {**state, "step": None, "dep_level": level}
 
         r = DEP_R[level]
-        await send_photo(
-            chat_id, r["image"],
-            caption=f"<b>{r['title']}</b>\n\n{r['text']}",
-            reply_markup=_dep_result_kb(),
-        )
+        await send_photo(chat_id, r["image"])
+        await send(chat_id, f"<b>{r['title']}</b>\n\n{r['text']}", reply_markup=_dep_result_kb())
         await notion_leads.upsert_lead(
             user_id=user_id, username=username,
             attachment_type=attachment_type,
