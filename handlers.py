@@ -4,6 +4,7 @@ Flows: /start → menu → guide / quiz / club / lesson
        quiz → 8 questions → result → deprivation quiz (anxious only)
        deprivation quiz → 10 questions → result → protocol pre-reg
 """
+import json
 import logging
 import httpx
 
@@ -86,12 +87,20 @@ async def send_photo(chat_id: int, image_path: str, caption: str = "",
         if cached:
             r = await _api("sendPhoto", json={**payload, "photo": cached})
         else:
+            # multipart upload: reply_markup должен быть JSON-строкой, не словарём
+            upload_payload = {**payload}
+            if "reply_markup" in upload_payload:
+                upload_payload["reply_markup"] = json.dumps(
+                    upload_payload["reply_markup"], ensure_ascii=False
+                )
             with open(image_path, "rb") as f:
                 ext = image_path.rsplit(".", 1)[-1].lower()
-                r = await _api("sendPhoto", data=payload,
+                r = await _api("sendPhoto", data=upload_payload,
                                 files={"photo": (f"img.{ext}", f)})
             if r.get("ok"):
                 _photo_cache[image_path] = r["result"]["photo"][-1]["file_id"]
+            else:
+                logger.error("sendPhoto failed: %s", r)
         return r.get("ok", False)
     except Exception as e:
         logger.error("send_photo error %s: %s", image_path, e)
