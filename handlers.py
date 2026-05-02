@@ -131,8 +131,8 @@ def _main_menu():
 
 def _after_guide_kb():
     return {"inline_keyboard": [
-        [{"text": "🧠 Пройти тест", "callback_data": "start_quiz"}],
-        [{"text": "🔒 Сразу в клуб", "callback_data": "join_club"}],
+        [{"text": "🧠 Пройти тест на тип привязанности", "callback_data": "start_quiz"}],
+        [{"text": "🔒 Предзапись в клуб", "callback_data": "join_club"}],
     ]}
 
 
