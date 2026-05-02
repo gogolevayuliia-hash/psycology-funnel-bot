@@ -157,18 +157,18 @@ def _after_guide_kb():
 
 def _quiz_kb(q_index: int):
     q = QUIZ_Q[q_index]
-    return {"inline_keyboard": [[
-        {"text": LETTERS[i], "callback_data": f"q_{q_index}_{i}"}
+    return {"inline_keyboard": [
+        [{"text": LETTERS[i], "callback_data": f"q_{q_index}_{i}"}]
         for i in range(len(q["options"]))
-    ]]}
+    ]}
 
 
 def _dep_quiz_kb(q_index: int):
     q = DEP_Q[q_index]
-    return {"inline_keyboard": [[
-        {"text": LETTERS[i], "callback_data": f"dq_{q_index}_{i}"}
+    return {"inline_keyboard": [
+        [{"text": LETTERS[i], "callback_data": f"dq_{q_index}_{i}"}]
         for i in range(len(q["options"]))
-    ]]}
+    ]}
 
 
 def _anxious_result_kb():
