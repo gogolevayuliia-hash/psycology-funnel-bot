@@ -3,6 +3,7 @@ Handlers for the marketing funnel bot.
 Flows: /start → menu → guide / quiz / club / lesson
        quiz → 8 questions → result → deprivation quiz (anxious only)
        deprivation quiz → 10 questions → result → protocol pre-reg
+       talk_quiz → 5 questions → result → video lesson link
 """
 import json
 import logging
@@ -13,6 +14,10 @@ from quiz import QUESTIONS as QUIZ_Q, RESULTS as QUIZ_R, calculate_result as qui
 from deprivation_quiz import (
     QUESTIONS as DEP_Q, RESULTS as DEP_R, PROTOCOL_DESCRIPTION,
     calculate_result as dep_result,
+)
+from conversation_quiz import (
+    QUESTIONS as TALK_Q, RESULTS as TALK_R, TALK_URL,
+    calculate_result as talk_result,
 )
 from texts import (
     WELCOME, GUIDE_CAPTION, CLUB_INVITE, CLUB_CONFIRMED,
@@ -33,7 +38,7 @@ logger = logging.getLogger(__name__)
 BASE = f"https://api.telegram.org/bot{MARKETING_BOT_TOKEN}"
 
 # ── In-memory state ──────────────────────────────────────────────────────────
-# step values: None | "quiz" | "dep_quiz" | "awaiting_name" | "awaiting_protocol_name"
+# step values: None | "quiz" | "dep_quiz" | "talk_quiz" | "awaiting_name" | "awaiting_protocol_name"
 user_state: dict[int, dict] = {}
 
 # Cached file_ids (avoid re-uploading on every send)
@@ -140,11 +145,18 @@ async def notify_admin(text: str) -> None:
 def _main_menu():
     return {"inline_keyboard": [
         [{"text": "📄 Получить гайд бесплатно", "callback_data": "get_guide"}],
-        [{"text": "🧠 Пройти тест на тип привязанности", "callback_data": "start_quiz"}],
-        [{"text": "📊 Тест на эмоциональную депривацию", "callback_data": "start_dep_quiz"}],
+        [{"text": "🧪 Тесты", "callback_data": "show_tests"}],
         [{"text": "🔒 Предзапись в клуб «Кубики Жизни»", "callback_data": "join_club"}],
         [{"text": "🩺 Записаться к психологу", "callback_data": "psychologist"}],
         [{"text": "🌐 Сайт", "url": SITE_URL}],
+    ]}
+
+
+def _tests_menu_kb():
+    return {"inline_keyboard": [
+        [{"text": "🧠 Тип привязанности", "callback_data": "start_quiz"}],
+        [{"text": "📊 Эмоциональная депривация", "callback_data": "start_dep_quiz"}],
+        [{"text": "💬 Как вы говорите в конфликте", "callback_data": "start_talk_quiz"}],
     ]}
 
 
@@ -168,6 +180,21 @@ def _dep_quiz_kb(q_index: int):
     return {"inline_keyboard": [
         [{"text": LETTERS[i], "callback_data": f"dq_{q_index}_{i}"}]
         for i in range(len(q["options"]))
+    ]}
+
+
+def _talk_quiz_kb(q_index: int):
+    q = TALK_Q[q_index]
+    return {"inline_keyboard": [
+        [{"text": LETTERS[i], "callback_data": f"tq_{q_index}_{i}"}]
+        for i in range(len(q["options"]))
+    ]}
+
+
+def _talk_result_kb():
+    return {"inline_keyboard": [
+        [{"text": "🎬 Смотреть урок «Нам надо поговорить»", "url": TALK_URL}],
+        [{"text": "🔒 Предзапись в клуб", "callback_data": "join_club"}],
     ]}
 
 
@@ -216,7 +243,7 @@ def _psychologist_kb():
 def _fallback_kb():
     return {"inline_keyboard": [
         [{"text": "📄 Гайд", "callback_data": "get_guide"},
-         {"text": "🧠 Тест", "callback_data": "start_quiz"},
+         {"text": "🧪 Тесты", "callback_data": "show_tests"},
          {"text": "🔒 Клуб", "callback_data": "join_club"}],
         [{"text": "🩺 К психологу", "callback_data": "psychologist"}],
     ]}
@@ -287,6 +314,9 @@ async def _handle_message(message: dict) -> None:
         elif param == "quiz":
             await _show_persistent_menu(chat_id)
             await _start_quiz(chat_id, user_id)
+        elif param == "talk":
+            await _show_persistent_menu(chat_id)
+            await _start_talk_quiz(chat_id, user_id)
         else:
             await _welcome(chat_id, user_id, username, source)
         return
@@ -342,6 +372,9 @@ async def _handle_callback(cb: dict) -> None:
     if data == "get_guide":
         await _deliver_guide(chat_id, user_id, username, source, "кнопка меню")
 
+    elif data == "show_tests":
+        await send(chat_id, "Выберите тест 👇", reply_markup=_tests_menu_kb())
+
     elif data == "start_quiz":
         await _start_quiz(chat_id, user_id)
 
@@ -357,6 +390,14 @@ async def _handle_callback(cb: dict) -> None:
         # dq_{q_index}_{option_index}
         _, q_idx, opt_idx = data.split("_")
         await _process_dep_answer(chat_id, user_id, username, int(q_idx), int(opt_idx))
+
+    elif data == "start_talk_quiz":
+        await _start_talk_quiz(chat_id, user_id)
+
+    elif data.startswith("tq_"):
+        # tq_{q_index}_{option_index}
+        _, q_idx, opt_idx = data.split("_")
+        await _process_talk_answer(chat_id, user_id, int(q_idx), int(opt_idx))
 
     elif data == "join_club":
         await _ask_name_for_club(chat_id, user_id)
@@ -496,6 +537,48 @@ async def _process_dep_answer(chat_id: int, user_id: int, username: str | None,
             status="Получил гайд", source=source,
             request="тест депривации", deprivation_level=level,
         )
+
+
+# ── Conversation quiz (Готтман) ───────────────────────────────────────────────
+
+async def _start_talk_quiz(chat_id: int, user_id: int) -> None:
+    prev = user_state.get(user_id, {})
+    user_state[user_id] = {**prev, "step": "talk_quiz",
+                            "tq_answers": [], "tq_index": 0}
+    await send(
+        chat_id,
+        (
+            "💬 <b>Тест «Как вы разговариваете в конфликте»</b>\n\n"
+            "Исследователь Джон Готтман 40 лет изучал пары — и выделил четыре "
+            "паттерна, которые разрушают диалог. Они называются «четыре всадника».\n\n"
+            "Этот тест покажет, какой из них преобладает у вас. "
+            "5 вопросов. Выбирайте первую реакцию — не ту, которой гордитесь."
+        ),
+    )
+    await send(chat_id, _build_question_text(TALK_Q[0]), reply_markup=_talk_quiz_kb(0))
+
+
+async def _process_talk_answer(chat_id: int, user_id: int,
+                                 q_index: int, opt_index: int) -> None:
+    state = user_state.get(user_id, {})
+    if state.get("step") != "talk_quiz" or state.get("tq_index") != q_index:
+        return
+
+    opt = TALK_Q[q_index]["options"][opt_index]
+    atype, score = opt[1], opt[2]
+    state["tq_answers"].append((atype, score))
+    next_idx = q_index + 1
+
+    if next_idx < len(TALK_Q):
+        state["tq_index"] = next_idx
+        await send(chat_id, _build_question_text(TALK_Q[next_idx]),
+                   reply_markup=_talk_quiz_kb(next_idx))
+    else:
+        pattern = talk_result(state["tq_answers"])
+        user_state[user_id] = {**state, "step": None, "talk_pattern": pattern}
+        r = TALK_R[pattern]
+        await send(chat_id, f"<b>{r['title']}</b>\n\n{r['text']}",
+                   reply_markup=_talk_result_kb())
 
 
 # ── Club registration ────────────────────────────────────────────────────────
