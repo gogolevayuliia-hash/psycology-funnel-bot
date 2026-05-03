@@ -545,9 +545,9 @@ async def _start_talk_quiz(chat_id: int, user_id: int) -> None:
     prev = user_state.get(user_id, {})
     user_state[user_id] = {**prev, "step": "talk_quiz",
                             "tq_answers": [], "tq_index": 0}
-    await send(
-        chat_id,
-        (
+    await send_photo(
+        chat_id, "images/talk_cover.png",
+        caption=(
             "💬 <b>Тест «Как вы разговариваете в конфликте»</b>\n\n"
             "Исследователь Джон Готтман 40 лет изучал пары — и выделил четыре "
             "паттерна, которые разрушают диалог. Они называются «четыре всадника».\n\n"
@@ -577,6 +577,7 @@ async def _process_talk_answer(chat_id: int, user_id: int,
         pattern = talk_result(state["tq_answers"])
         user_state[user_id] = {**state, "step": None, "talk_pattern": pattern}
         r = TALK_R[pattern]
+        await send_photo(chat_id, r["image"])
         await send(chat_id, f"<b>{r['title']}</b>\n\n{r['text']}",
                    reply_markup=_talk_result_kb())
 
