@@ -25,6 +25,7 @@ from texts import (
     FALLBACK, SITE_URL, CHANNEL_INVITE_TEXT, VIDEO_LESSON_TEXT,
 )
 import notion_leads
+from articles import ARTICLES, format_articles
 
 LETTERS = ["А", "Б", "В", "Г", "Д"]
 
@@ -146,10 +147,23 @@ def _main_menu():
     return {"inline_keyboard": [
         [{"text": "📄 Получить гайд бесплатно", "callback_data": "get_guide"}],
         [{"text": "🧪 Тесты", "callback_data": "show_tests"}],
+        [{"text": "📚 Статьи про отношения", "callback_data": "show_articles"}],
         [{"text": "🔒 Предзапись в клуб «Кубики Жизни»", "callback_data": "join_club"}],
         [{"text": "🩺 Записаться к психологу", "callback_data": "psychologist"}],
         [{"text": "🌐 Сайт", "url": SITE_URL}],
     ]}
+
+
+def _articles_menu_kb():
+    """Рубрикатор — выбор темы, по 2 кнопки в ряд."""
+    keys = list(ARTICLES.keys())
+    rows = []
+    for i in range(0, len(keys), 2):
+        row = []
+        for k in keys[i:i+2]:
+            row.append({"text": ARTICLES[k]["title"], "callback_data": f"art_{k}"})
+        rows.append(row)
+    return {"inline_keyboard": rows}
 
 
 def _tests_menu_kb():
@@ -381,6 +395,25 @@ async def _handle_callback(cb: dict) -> None:
 
     elif data == "show_tests":
         await send(chat_id, "Выберите тест 👇", reply_markup=_tests_menu_kb())
+
+    elif data == "show_articles":
+        await send(
+            chat_id,
+            "Выберите тему — пришлю три материала из канала 👇",
+            reply_markup=_articles_menu_kb(),
+        )
+
+    elif data.startswith("art_"):
+        category_key = data[4:]
+        if category_key in ARTICLES:
+            text = format_articles(category_key)
+            await send(
+                chat_id, text,
+                reply_markup={"inline_keyboard": [
+                    [{"text": "📣 Подписаться на канал", "url": CHANNEL_URL}],
+                    [{"text": "← Другая тема", "callback_data": "show_articles"}],
+                ]},
+            )
 
     elif data == "start_quiz":
         await _start_quiz(chat_id, user_id)
