@@ -22,7 +22,7 @@ from conversation_quiz import (
 from texts import (
     WELCOME, GUIDE_CAPTION, CLUB_INVITE, CLUB_CONFIRMED,
     PSYCHOLOGIST_TEXT, PSYCHOLOGIST_URL, PROTOCOL_CONFIRMED,
-    FALLBACK, SITE_URL,
+    FALLBACK, SITE_URL, CHANNEL_INVITE_TEXT, VIDEO_LESSON_TEXT,
 )
 import notion_leads
 
@@ -193,7 +193,7 @@ def _talk_quiz_kb(q_index: int):
 
 def _talk_result_kb():
     return {"inline_keyboard": [
-        [{"text": "🎬 Смотреть урок «Нам надо поговорить»", "url": TALK_URL}],
+        [{"text": "🎬 Урок про разговоры — подробнее", "callback_data": "show_video_lesson"}],
         [{"text": "🔒 Предзапись в клуб", "callback_data": "join_club"}],
     ]}
 
@@ -208,7 +208,7 @@ def _anxious_result_kb():
 
 def _avoidant_result_kb():
     return {"inline_keyboard": [
-        [{"text": "💳 Купить уроки — 990 ₽", "url": TRIPWIRE_URL}],
+        [{"text": "🎬 Урок про разговоры — подробнее", "callback_data": "show_video_lesson"}],
         [{"text": "🔒 Записаться в клуб", "callback_data": "join_club"}],
     ]}
 
@@ -216,13 +216,12 @@ def _avoidant_result_kb():
 def _fearful_result_kb():
     return {"inline_keyboard": [
         [{"text": "🔒 Записаться в клуб", "callback_data": "join_club"}],
-        [{"text": "📺 Читать канал", "url": CHANNEL_URL}],
     ]}
 
 
 def _secure_result_kb():
     return {"inline_keyboard": [
-        [{"text": "🎬 Смотреть видеоурок — 990 ₽", "url": TRIPWIRE_URL}],
+        [{"text": "🎬 Урок про разговоры — подробнее", "callback_data": "show_video_lesson"}],
         [{"text": "🔒 Хочу в клуб", "callback_data": "join_club"}],
     ]}
 
@@ -231,6 +230,14 @@ def _dep_result_kb():
     return {"inline_keyboard": [
         [{"text": "🔔 Записаться на практикум", "callback_data": "join_protocol"}],
         [{"text": "🔒 Записаться в клуб", "callback_data": "join_club"}],
+    ]}
+
+
+def _video_lesson_kb():
+    """Кнопка покупки — показывается после текста-продажи видео."""
+    return {"inline_keyboard": [
+        [{"text": "🎬 Купить урок — 990 ₽", "url": TRIPWIRE_URL}],
+        [{"text": "🔒 Предзапись в клуб", "callback_data": "join_club"}],
     ]}
 
 
@@ -399,6 +406,9 @@ async def _handle_callback(cb: dict) -> None:
         _, q_idx, opt_idx = data.split("_")
         await _process_talk_answer(chat_id, user_id, int(q_idx), int(opt_idx))
 
+    elif data == "show_video_lesson":
+        await send(chat_id, VIDEO_LESSON_TEXT, reply_markup=_video_lesson_kb())
+
     elif data == "join_club":
         await _ask_name_for_club(chat_id, user_id)
 
@@ -484,6 +494,8 @@ async def _show_quiz_result(chat_id: int, user_id: int, username: str | None,
     # Фото отдельно — без ограничения в 1024 символа на подпись
     await send_photo(chat_id, r["image"])
     await send(chat_id, f"<b>{r['title']}</b>\n\n{r['text']}", reply_markup=kb)
+    await send(chat_id, CHANNEL_INVITE_TEXT,
+               reply_markup={"inline_keyboard": [[{"text": "📣 Подписаться на канал", "url": CHANNEL_URL}]]})
     await notion_leads.upsert_lead(user_id=user_id, username=username,
                                    attachment_type=attachment_type,
                                    status="Получил гайд", source=source, request="тест")
@@ -531,6 +543,8 @@ async def _process_dep_answer(chat_id: int, user_id: int, username: str | None,
         r = DEP_R[level]
         await send_photo(chat_id, r["image"])
         await send(chat_id, f"<b>{r['title']}</b>\n\n{r['text']}", reply_markup=_dep_result_kb())
+        await send(chat_id, CHANNEL_INVITE_TEXT,
+                   reply_markup={"inline_keyboard": [[{"text": "📣 Подписаться на канал", "url": CHANNEL_URL}]]})
         await notion_leads.upsert_lead(
             user_id=user_id, username=username,
             attachment_type=attachment_type,
@@ -580,6 +594,8 @@ async def _process_talk_answer(chat_id: int, user_id: int,
         await send_photo(chat_id, r["image"])
         await send(chat_id, f"<b>{r['title']}</b>\n\n{r['text']}",
                    reply_markup=_talk_result_kb())
+        await send(chat_id, CHANNEL_INVITE_TEXT,
+                   reply_markup={"inline_keyboard": [[{"text": "📣 Подписаться на канал", "url": CHANNEL_URL}]]})
 
 
 # ── Club registration ────────────────────────────────────────────────────────
