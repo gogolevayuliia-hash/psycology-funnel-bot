@@ -280,10 +280,13 @@ async def _handle_message(message: dict) -> None:
         param = text[7:].strip() if low.startswith("/start ") else None
         source = _parse_source(param)
         user_state[user_id] = {**state, "source": source}
-        # Глубокая ссылка: t.me/bot?start=deptest → сразу тест на депривацию
+        # Глубокие ссылки
         if param == "deptest":
             await _show_persistent_menu(chat_id)
             await _start_dep_quiz(chat_id, user_id)
+        elif param == "quiz":
+            await _show_persistent_menu(chat_id)
+            await _start_quiz(chat_id, user_id)
         else:
             await _welcome(chat_id, user_id, username, source)
         return
