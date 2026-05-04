@@ -23,8 +23,11 @@ from texts import (
     WELCOME, GUIDE_CAPTION, CLUB_INVITE, CLUB_CONFIRMED,
     PSYCHOLOGIST_TEXT, PSYCHOLOGIST_URL, PROTOCOL_CONFIRMED,
     FALLBACK, SITE_URL, CHANNEL_INVITE_TEXT, VIDEO_LESSON_TEXT,
+    LESSON_DELIVERY_CAPTION,
 )
+from config import LESSON_PDF_PATH
 import notion_leads
+import stats as _stats
 from articles import ARTICLES, format_articles
 
 LETTERS = ["А", "Б", "В", "Г", "Д"]
@@ -391,6 +394,7 @@ async def _handle_callback(cb: dict) -> None:
     source = state.get("source", "Прямой")
 
     if data == "get_guide":
+        _stats.bot["guide"] += 1
         await _deliver_guide(chat_id, user_id, username, source, "кнопка меню")
 
     elif data == "show_tests":
@@ -420,39 +424,43 @@ async def _handle_callback(cb: dict) -> None:
             _asyncio.create_task(notion_leads.log_rubric(user_id, rubric_title))
 
     elif data == "start_quiz":
+        _stats.bot["quiz_attachment"] += 1
         await _start_quiz(chat_id, user_id)
 
     elif data.startswith("q_"):
-        # q_{q_index}_{option_index}
         _, q_idx, opt_idx = data.split("_")
         await _process_quiz_answer(chat_id, user_id, username, int(q_idx), int(opt_idx))
 
     elif data == "start_dep_quiz":
+        _stats.bot["quiz_deprivation"] += 1
         await _start_dep_quiz(chat_id, user_id)
 
     elif data.startswith("dq_"):
-        # dq_{q_index}_{option_index}
         _, q_idx, opt_idx = data.split("_")
         await _process_dep_answer(chat_id, user_id, username, int(q_idx), int(opt_idx))
 
     elif data == "start_talk_quiz":
+        _stats.bot["quiz_talk"] += 1
         await _start_talk_quiz(chat_id, user_id)
 
     elif data.startswith("tq_"):
-        # tq_{q_index}_{option_index}
         _, q_idx, opt_idx = data.split("_")
         await _process_talk_answer(chat_id, user_id, int(q_idx), int(opt_idx))
 
     elif data == "show_video_lesson":
+        _stats.bot["video_lesson"] += 1
         await send(chat_id, VIDEO_LESSON_TEXT, reply_markup=_video_lesson_kb())
 
     elif data == "join_club":
+        _stats.bot["club"] += 1
         await _ask_name_for_club(chat_id, user_id)
 
     elif data == "join_protocol":
+        _stats.bot["protocol"] += 1
         await _ask_name_for_protocol(chat_id, user_id)
 
     elif data == "psychologist":
+        _stats.bot["psychologist"] += 1
         await send(chat_id, PSYCHOLOGIST_TEXT, reply_markup=_psychologist_kb())
 
 
@@ -709,6 +717,68 @@ async def _save_protocol_registration(chat_id: int, user_id: int,
         f"📊 Депривация: {dep_level or '—'}\n"
         f"📲 Источник: {source}"
     )
+
+
+# ── Tribute purchase delivery ────────────────────────────────────────────────
+
+# Кэш file_id PDF шпаргалки (чтобы не перезаливать каждый раз)
+_lesson_file_id: str | None = None
+
+
+async def handle_tribute_purchase(tg_id: int, payload: dict) -> None:
+    """
+    Вызывается при успешной оплате на Tribute.
+    Отправляет покупателю PDF шпаргалку и уведомляет администратора.
+    """
+    global _lesson_file_id
+    logger.info("tribute purchase: tg_id=%s", tg_id)
+
+    sent = await _send_lesson_pdf(tg_id)
+
+    # Уведомление администратора
+    product_title = (
+        payload.get("product", {}).get("title") or
+        payload.get("item", {}).get("title") or
+        "видеоурок"
+    )
+    amount = payload.get("amount") or payload.get("sum") or "—"
+    username = (
+        payload.get("user", {}).get("username") or
+        payload.get("buyer", {}).get("username") or ""
+    )
+    tg_info = f"@{username}" if username else f"id{tg_id}"
+    status = "✅ PDF отправлен" if sent else "❌ Не удалось отправить PDF (добавьте lesson.pdf в бот)"
+
+    await notify_admin(
+        f"💳 <b>Новая покупка на Tribute!</b>\n\n"
+        f"👤 {tg_info} (<code>{tg_id}</code>)\n"
+        f"📦 {product_title}\n"
+        f"💰 {amount} ₽\n"
+        f"{status}"
+    )
+
+
+async def _send_lesson_pdf(chat_id: int) -> bool:
+    """Отправляет PDF шпаргалку. Возвращает True если успешно."""
+    global _lesson_file_id
+    import os
+    caption = LESSON_DELIVERY_CAPTION
+    payload = {"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"}
+    try:
+        if _lesson_file_id:
+            r = await _api("sendDocument", json={**payload, "document": _lesson_file_id})
+        else:
+            if not os.path.exists(LESSON_PDF_PATH):
+                logger.error("lesson.pdf not found at %s", LESSON_PDF_PATH)
+                return False
+            with open(LESSON_PDF_PATH, "rb") as f:
+                r = await _api("sendDocument", data=payload, files={"document": f})
+            if r.get("ok"):
+                _lesson_file_id = r["result"]["document"]["file_id"]
+        return r.get("ok", False)
+    except Exception as e:
+        logger.error("_send_lesson_pdf error: %s", e)
+        return False
 
 
 # ── Broadcast ────────────────────────────────────────────────────────────────

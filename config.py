@@ -17,3 +17,9 @@ CHANNEL_URL = "https://t.me/gogolevajuls"
 
 # Токен для доступа к дашборду аналитики: /dashboard?token=...
 DASHBOARD_TOKEN = os.environ.get("DASHBOARD_TOKEN", "change_me_in_railway")
+
+# Tribute API ключ — для верификации входящих вебхуков
+TRIBUTE_API_KEY = os.environ.get("TRIBUTE_API_KEY", "")
+
+# Путь к PDF шпаргалке видеоурока (отправляется покупателям)
+LESSON_PDF_PATH = "lesson.pdf"
