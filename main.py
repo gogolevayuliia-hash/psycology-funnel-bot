@@ -227,5 +227,5 @@ async def dashboard(request: Request, token: str = ""):
         stats = await notion_leads.get_stats()
     except Exception as e:
         logger.error("dashboard stats error: %s", e)
-        stats = {"total": 0, "updated_at": "ошибка загрузки"}
+        stats = {"total": 0, "updated_at": f"ошибка: {e}"}
     return HTMLResponse(_render_dashboard(stats))
