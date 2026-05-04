@@ -14,3 +14,6 @@ TRIPWIRE_URL = os.environ.get("TRIPWIRE_URL", "https://tribute.tg/")
 
 # Ссылка на открытый канал
 CHANNEL_URL = "https://t.me/gogolevajuls"
+
+# Токен для доступа к дашборду аналитики: /dashboard?token=...
+DASHBOARD_TOKEN = os.environ.get("DASHBOARD_TOKEN", "change_me_in_railway")

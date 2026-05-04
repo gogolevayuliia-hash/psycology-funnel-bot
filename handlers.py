@@ -414,6 +414,10 @@ async def _handle_callback(cb: dict) -> None:
                     [{"text": "← Другая тема", "callback_data": "show_articles"}],
                 ]},
             )
+            # Сохраняем рубрику в Notion (fire-and-forget)
+            rubric_title = ARTICLES[category_key]["title"]
+            import asyncio as _asyncio
+            _asyncio.create_task(notion_leads.log_rubric(user_id, rubric_title))
 
     elif data == "start_quiz":
         await _start_quiz(chat_id, user_id)
@@ -624,11 +628,17 @@ async def _process_talk_answer(chat_id: int, user_id: int,
         pattern = talk_result(state["tq_answers"])
         user_state[user_id] = {**state, "step": None, "talk_pattern": pattern}
         r = TALK_R[pattern]
+        source = state.get("source", "Прямой")
         await send_photo(chat_id, r["image"])
         await send(chat_id, f"<b>{r['title']}</b>\n\n{r['text']}",
                    reply_markup=_talk_result_kb())
         await send(chat_id, CHANNEL_INVITE_TEXT,
                    reply_markup={"inline_keyboard": [[{"text": "📣 Подписаться на канал", "url": CHANNEL_URL}]]})
+        await notion_leads.upsert_lead(
+            user_id=user_id, username=None,
+            status="Получил гайд", source=source,
+            request="тест разговора", talk_pattern=pattern,
+        )
 
 
 # ── Club registration ────────────────────────────────────────────────────────
