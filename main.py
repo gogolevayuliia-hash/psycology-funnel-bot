@@ -205,12 +205,13 @@ def _card(title: str, content: str) -> str:
 
 
 def _big(n, label: str, color: str, sub: str = "") -> str:
+    sub_html = f'<div style="font-size:11px;margin-top:2px;color:{color}">{sub}</div>' if sub else ""
     return (
         f'<div style="flex:1;background:#fff;border-radius:14px;padding:20px 16px;'
         f'text-align:center;border:1.5px solid #eee">'
         f'<div style="font-size:36px;font-weight:800;color:{color}">{n}</div>'
         f'<div style="font-size:12px;color:#888;margin-top:3px">{label}</div>'
-        f'{"<div style=\\"font-size:11px;margin-top:2px;color:"+color+"\\">"+sub+"</div>" if sub else ""}'
+        f'{sub_html}'
         f'</div>'
     )
 
