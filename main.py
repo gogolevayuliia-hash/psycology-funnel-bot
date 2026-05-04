@@ -83,13 +83,9 @@ async def tribute_webhook(request: Request):
     Документация: https://tribute.tg/api
     """
     try:
-        # Верификация по API ключу (Tribute передаёт его в заголовке)
-        if TRIBUTE_API_KEY:
-            auth = request.headers.get("Authorization", "")
-            api_key = auth.replace("Bearer ", "").strip()
-            if api_key != TRIBUTE_API_KEY:
-                logger.warning("tribute_webhook: invalid API key")
-                return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+        # Логируем все заголовки чтобы понять как Tribute передаёт ключ
+        headers_log = dict(request.headers)
+        logger.info("tribute_webhook headers: %s", headers_log)
 
         data = await request.json()
         logger.info("tribute_webhook payload: %s", data)
