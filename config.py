@@ -13,4 +13,4 @@ GUIDE_KEYWORD = "гайд"
 TRIPWIRE_URL = os.environ.get("TRIPWIRE_URL", "https://tribute.tg/")
 
 # Ссылка на открытый канал
-CHANNEL_URL = "https://t.me/cubesoflife"
+CHANNEL_URL = "https://t.me/gogolevajuls"
