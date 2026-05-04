@@ -101,24 +101,20 @@ async def tribute_webhook(request: Request):
         logger.info("tribute_webhook payload: %s", data)
 
         # Тестовый запрос из Tribute — просто подтверждаем получение
-        if data.get("test_event"):
-            logger.info("tribute_webhook: test event received, OK")
+        if data.get("test_event") or data.get("name") not in ("new_digital_product", None):
+            if data.get("name") not in ("new_digital_product", None):
+                logger.info("tribute_webhook: skipping event type=%s", data.get("name"))
+            else:
+                logger.info("tribute_webhook: test event received, OK")
             return JSONResponse({"ok": True})
 
-        # Извлекаем Telegram user_id покупателя
-        # Пробуем разные поля — уточним после первой реальной покупки
-        tg_id = (
-            _deep_get(data, "user", "id") or
-            _deep_get(data, "user", "telegram_id") or
-            _deep_get(data, "buyer", "id") or
-            _deep_get(data, "buyer", "telegram_id") or
-            _deep_get(data, "telegram_id") or
-            _deep_get(data, "user_id")
-        )
+        # Структура Tribute: данные покупки внутри data["payload"]
+        tribute_payload = data.get("payload", data)
+
+        tg_id = tribute_payload.get("telegram_user_id")
 
         if not tg_id:
             logger.warning("tribute_webhook: no telegram_id found. payload=%s", data)
-            # Уведомляем администратора — нужно разобраться вручную
             asyncio.create_task(handlers.notify_admin(
                 f"⚠️ <b>Tribute: покупка без telegram_id</b>\n\nPayload:\n<code>{data}</code>"
             ))

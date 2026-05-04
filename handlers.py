@@ -736,17 +736,12 @@ async def handle_tribute_purchase(tg_id: int, payload: dict) -> None:
     sent = await _send_lesson_pdf(tg_id)
 
     # Уведомление администратора
-    product_title = (
-        payload.get("product", {}).get("title") or
-        payload.get("item", {}).get("title") or
-        "видеоурок"
-    )
-    amount = payload.get("amount") or payload.get("sum") or "—"
-    username = (
-        payload.get("user", {}).get("username") or
-        payload.get("buyer", {}).get("username") or ""
-    )
-    tg_info = f"@{username}" if username else f"id{tg_id}"
+    # Данные покупки лежат внутри payload["payload"]
+    p = payload.get("payload", payload)
+    product_title = p.get("product_name") or "видеоурок"
+    amount        = p.get("amount", "—")
+    username      = p.get("telegram_username") or ""
+    tg_info       = f"@{username}" if username else f"id{tg_id}"
     status = "✅ PDF отправлен" if sent else "❌ Не удалось отправить PDF (добавьте lesson.pdf в бот)"
 
     await notify_admin(
