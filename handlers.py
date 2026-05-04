@@ -16,7 +16,7 @@ from deprivation_quiz import (
     calculate_result as dep_result,
 )
 from conversation_quiz import (
-    QUESTIONS as TALK_Q, RESULTS as TALK_R, TALK_URL,
+    QUESTIONS as TALK_Q, RESULTS as TALK_R,
     calculate_result as talk_result,
 )
 from texts import (

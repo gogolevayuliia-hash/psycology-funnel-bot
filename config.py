@@ -9,8 +9,8 @@ NOTION_LEADS_DB_ID = os.environ["NOTION_LEADS_DB_ID"]
 # Кодовое слово для получения гайда
 GUIDE_KEYWORD = "гайд"
 
-# Ссылка на трипваер (Tribute или другой сервис оплаты)
-TRIPWIRE_URL = os.environ.get("TRIPWIRE_URL", "https://tribute.tg/")
+# Ссылка на видеоурок на Tribute
+TRIPWIRE_URL = os.environ.get("TRIPWIRE_URL", "https://web.tribute.tg/p/vnW")
 
 # Ссылка на открытый канал
 CHANNEL_URL = "https://t.me/gogolevajuls"
