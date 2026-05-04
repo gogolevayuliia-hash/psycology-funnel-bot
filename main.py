@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import hmac
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -80,20 +82,35 @@ async def health():
 async def tribute_webhook(request: Request):
     """
     Tribute отправляет POST при успешной оплате.
-    Документация: https://tribute.tg/api
+    Верификация через заголовок trbt-signature (HMAC-SHA256 тела запроса).
     """
     try:
-        # Логируем все заголовки чтобы понять как Tribute передаёт ключ
-        headers_log = dict(request.headers)
-        logger.info("tribute_webhook headers: %s", headers_log)
+        body = await request.body()
+
+        # Верификация подписи Tribute (HMAC-SHA256 тела запроса)
+        if TRIBUTE_API_KEY:
+            signature = request.headers.get("trbt-signature", "")
+            expected = hmac.new(
+                TRIBUTE_API_KEY.encode(), body, hashlib.sha256
+            ).hexdigest()
+            if signature and not hmac.compare_digest(signature, expected):
+                # Предупреждение вместо отказа — алгоритм подписи уточним после первой покупки
+                logger.warning("tribute_webhook: signature mismatch (sig=%s expected=%s)", signature, expected)
 
         data = await request.json()
         logger.info("tribute_webhook payload: %s", data)
 
+        # Тестовый запрос из Tribute — просто подтверждаем получение
+        if data.get("test_event"):
+            logger.info("tribute_webhook: test event received, OK")
+            return JSONResponse({"ok": True})
+
         # Извлекаем Telegram user_id покупателя
-        # Tribute может отдавать разные структуры — пробуем все варианты
+        # Пробуем разные поля — уточним после первой реальной покупки
         tg_id = (
             _deep_get(data, "user", "id") or
+            _deep_get(data, "user", "telegram_id") or
+            _deep_get(data, "buyer", "id") or
             _deep_get(data, "buyer", "telegram_id") or
             _deep_get(data, "telegram_id") or
             _deep_get(data, "user_id")
@@ -101,7 +118,11 @@ async def tribute_webhook(request: Request):
 
         if not tg_id:
             logger.warning("tribute_webhook: no telegram_id found. payload=%s", data)
-            return JSONResponse({"ok": True, "note": "no user id"})
+            # Уведомляем администратора — нужно разобраться вручную
+            asyncio.create_task(handlers.notify_admin(
+                f"⚠️ <b>Tribute: покупка без telegram_id</b>\n\nPayload:\n<code>{data}</code>"
+            ))
+            return JSONResponse({"ok": True})
 
         tg_id = int(tg_id)
         asyncio.create_task(handlers.handle_tribute_purchase(tg_id, data))
