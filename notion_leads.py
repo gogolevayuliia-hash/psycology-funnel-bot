@@ -156,10 +156,13 @@ async def _update_lead(page_id: str, name=None, attachment_type=None, status=Non
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
 def _sel(props: dict, key: str) -> str:
-    return (props.get(key) or {}).get("select", {}).get("name") or "—"
+    # Notion возвращает {"select": null} для пустых полей — нужен доп. or {}
+    val = (props.get(key) or {})
+    sel = val.get("select") or {}
+    return sel.get("name") or "—"
 
 def _txt(props: dict, key: str) -> str:
-    parts = (props.get(key) or {}).get("rich_text", [])
+    parts = ((props.get(key) or {}).get("rich_text")) or []
     return parts[0]["text"]["content"] if parts else "—"
 
 
