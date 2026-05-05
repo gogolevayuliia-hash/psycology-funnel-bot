@@ -149,13 +149,17 @@ async def notify_admin(text: str) -> None:
 
 def _main_menu():
     return {"inline_keyboard": [
+        # Лид-магнит
         [{"text": "📄 Получить гайд бесплатно", "callback_data": "get_guide"}],
-        [{"text": "🧪 Тесты", "callback_data": "show_tests"}],
-        [{"text": "📚 Статьи про отношения", "callback_data": "show_articles"}],
+        # Бесплатный контент
+        [{"text": "🧪 Тесты", "callback_data": "show_tests"},
+         {"text": "📚 Статьи про отношения", "callback_data": "show_articles"}],
+        # Продукты
         [{"text": "🎬 Обучающие видео", "callback_data": "show_videos"}],
         [{"text": "🔒 Предзапись в клуб «Кубики Жизни»", "callback_data": "join_club"}],
-        [{"text": "🩺 Записаться к психологу", "callback_data": "psychologist"}],
-        [{"text": "🌐 Сайт", "url": SITE_URL}],
+        # Сервисы
+        [{"text": "🩺 Записаться к психологу", "callback_data": "psychologist"},
+         {"text": "🌐 Сайт", "url": SITE_URL}],
     ]}
 
 
