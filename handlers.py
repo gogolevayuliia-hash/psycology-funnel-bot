@@ -5,6 +5,7 @@ Flows: /start → menu → guide / quiz / club / lesson
        deprivation quiz → 10 questions → result → protocol pre-reg
        talk_quiz → 5 questions → result → video lesson link
 """
+import asyncio
 import json
 import logging
 import httpx
@@ -461,8 +462,7 @@ async def _handle_callback(cb: dict) -> None:
             )
             # Сохраняем рубрику в Notion (fire-and-forget)
             rubric_title = ARTICLES[category_key]["title"]
-            import asyncio as _asyncio
-            _asyncio.create_task(notion_leads.log_rubric(user_id, rubric_title))
+            asyncio.create_task(notion_leads.log_rubric(user_id, rubric_title))
 
     elif data == "start_quiz":
         _stats.bot["quiz_attachment"] += 1
@@ -510,8 +510,11 @@ async def _handle_callback(cb: dict) -> None:
 
 async def _welcome(chat_id: int, user_id: int, username: str | None,
                    source: str = "Прямой") -> None:
-    await notion_leads.upsert_lead(user_id=user_id, username=username,
-                                   status="Зашёл", source=source, request="/start")
+    # Notion пишем в фоне — не блокируем ответ пользователю
+    asyncio.create_task(notion_leads.upsert_lead(
+        user_id=user_id, username=username,
+        status="Зашёл", source=source, request="/start",
+    ))
     await _show_persistent_menu(chat_id)
     await send_photo(chat_id, "images/julia.jpg")
     await send(chat_id, WELCOME, reply_markup=_main_menu())
@@ -521,8 +524,10 @@ async def _deliver_guide(chat_id: int, user_id: int, username: str | None,
                           source: str, request: str) -> None:
     ok = await send_guide(chat_id, reply_markup=_after_guide_kb())
     if ok:
-        await notion_leads.upsert_lead(user_id=user_id, username=username,
-                                       status="Получил гайд", source=source, request=request)
+        asyncio.create_task(notion_leads.upsert_lead(
+            user_id=user_id, username=username,
+            status="Получил гайд", source=source, request=request,
+        ))
     else:
         await send(chat_id, "Произошла ошибка при отправке файла. Попробуйте позже.")
 
@@ -583,9 +588,11 @@ async def _show_quiz_result(chat_id: int, user_id: int, username: str | None,
     await send(chat_id, f"<b>{r['title']}</b>\n\n{r['text']}", reply_markup=kb)
     await send(chat_id, CHANNEL_INVITE_TEXT,
                reply_markup={"inline_keyboard": [[{"text": "📣 Подписаться на канал", "url": CHANNEL_URL}]]})
-    await notion_leads.upsert_lead(user_id=user_id, username=username,
-                                   attachment_type=attachment_type,
-                                   status="Получил гайд", source=source, request="тест")
+    asyncio.create_task(notion_leads.upsert_lead(
+        user_id=user_id, username=username,
+        attachment_type=attachment_type,
+        status="Получил гайд", source=source, request="тест",
+    ))
 
 
 # ── Deprivation quiz ─────────────────────────────────────────────────────────
@@ -632,12 +639,12 @@ async def _process_dep_answer(chat_id: int, user_id: int, username: str | None,
         await send(chat_id, f"<b>{r['title']}</b>\n\n{r['text']}", reply_markup=_dep_result_kb())
         await send(chat_id, CHANNEL_INVITE_TEXT,
                    reply_markup={"inline_keyboard": [[{"text": "📣 Подписаться на канал", "url": CHANNEL_URL}]]})
-        await notion_leads.upsert_lead(
+        asyncio.create_task(notion_leads.upsert_lead(
             user_id=user_id, username=username,
             attachment_type=attachment_type,
             status="Получил гайд", source=source,
             request="тест депривации", deprivation_level=level,
-        )
+        ))
 
 
 # ── Conversation quiz (Готтман) ───────────────────────────────────────────────
@@ -684,11 +691,11 @@ async def _process_talk_answer(chat_id: int, user_id: int,
                    reply_markup=_talk_result_kb())
         await send(chat_id, CHANNEL_INVITE_TEXT,
                    reply_markup={"inline_keyboard": [[{"text": "📣 Подписаться на канал", "url": CHANNEL_URL}]]})
-        await notion_leads.upsert_lead(
+        asyncio.create_task(notion_leads.upsert_lead(
             user_id=user_id, username=None,
             status="Получил гайд", source=source,
             request="тест разговора", talk_pattern=pattern,
-        )
+        ))
 
 
 # ── Club registration ────────────────────────────────────────────────────────
@@ -707,11 +714,11 @@ async def _save_club_registration(chat_id: int, user_id: int,
     dep_level = prev.get("dep_level")
     user_state[user_id] = {**prev, "step": None}
 
-    await notion_leads.upsert_lead(
+    asyncio.create_task(notion_leads.upsert_lead(
         user_id=user_id, username=username, name=name,
         attachment_type=attachment_type, status="Предзапись",
         source=source, request="клуб", deprivation_level=dep_level,
-    )
+    ))
     await send(chat_id, CLUB_CONFIRMED.format(name=name))
     tg = f"@{username}" if username else f"id{user_id}"
     await notify_admin(
@@ -744,11 +751,11 @@ async def _save_protocol_registration(chat_id: int, user_id: int,
     dep_level = prev.get("dep_level")
     user_state[user_id] = {**prev, "step": None}
 
-    await notion_leads.upsert_lead(
+    asyncio.create_task(notion_leads.upsert_lead(
         user_id=user_id, username=username, name=name,
         attachment_type=attachment_type, status="Предзапись практикум",
         source=source, request="практикум", deprivation_level=dep_level,
-    )
+    ))
     await send(chat_id, PROTOCOL_CONFIRMED.format(name=name))
     tg = f"@{username}" if username else f"id{user_id}"
     await notify_admin(
@@ -808,6 +815,8 @@ async def _send_preview_video(chat_id: int) -> bool:
                 "chat_id": chat_id,
                 "video": _preview_video_file_id,
                 "supports_streaming": True,
+                "width": 1280,
+                "height": 720,
             })
         else:
             if not os.path.exists(PREVIEW_VIDEO_PATH):
@@ -817,6 +826,8 @@ async def _send_preview_video(chat_id: int) -> bool:
                 r = await _api("sendVideo", data={
                     "chat_id": chat_id,
                     "supports_streaming": "true",
+                    "width": "1280",
+                    "height": "720",
                 }, files={"video": (PREVIEW_VIDEO_PATH, f, "video/mp4")})
             if r.get("ok"):
                 _preview_video_file_id = r["result"]["video"]["file_id"]
