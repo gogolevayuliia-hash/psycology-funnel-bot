@@ -127,11 +127,19 @@ async def send_guide(chat_id: int, reply_markup=None) -> bool:
         if _guide_file_id:
             r = await _api("sendDocument", json={**payload, "document": _guide_file_id})
         else:
+            # При multipart-загрузке reply_markup должен быть JSON-строкой
+            upload_payload = {**payload}
+            if "reply_markup" in upload_payload:
+                upload_payload["reply_markup"] = json.dumps(
+                    upload_payload["reply_markup"], ensure_ascii=False
+                )
             with open(GUIDE_PDF_PATH, "rb") as f:
-                r = await _api("sendDocument", data=payload,
+                r = await _api("sendDocument", data=upload_payload,
                                 files={"document": f})
             if r.get("ok"):
                 _guide_file_id = r["result"]["document"]["file_id"]
+            else:
+                logger.error("sendDocument failed: %s", r)
         return r.get("ok", False)
     except Exception as e:
         logger.error("send_guide error: %s", e)
@@ -150,7 +158,7 @@ async def notify_admin(text: str) -> None:
 def _main_menu():
     return {"inline_keyboard": [
         # Лид-магнит
-        [{"text": "📄 Получить гайд бесплатно", "callback_data": "get_guide"}],
+        [{"text": "🎁 Гайд — как перестать срываться", "callback_data": "get_guide"}],
         # Бесплатный контент
         [{"text": "🧪 Тесты", "callback_data": "show_tests"},
          {"text": "📚 Рубрикатор постов", "callback_data": "show_articles"}],
