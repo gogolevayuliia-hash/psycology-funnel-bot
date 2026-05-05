@@ -38,10 +38,22 @@ async def set_webhook() -> None:
         logger.info("setWebhook → %s", r.json())
 
 
+async def _autosave_loop() -> None:
+    """Сохраняет статистику каждые N секунд."""
+    while True:
+        await asyncio.sleep(_stats.SAVE_INTERVAL)
+        _stats.save()
+        logger.info("stats: autosaved")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _stats.load()                          # загружаем сохранённые данные
     await set_webhook()
+    task = asyncio.create_task(_autosave_loop())
     yield
+    _stats.save()                          # сохраняем при штатном завершении
+    task.cancel()
 
 
 app = FastAPI(lifespan=lifespan)
