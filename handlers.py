@@ -449,6 +449,7 @@ async def _handle_callback(cb: dict) -> None:
 
     elif data == "show_video_lesson":
         _stats.bot["video_lesson"] += 1
+        await _send_preview_video(chat_id)
         await send(chat_id, VIDEO_LESSON_TEXT, reply_markup=_video_lesson_kb())
 
     elif data == "join_club":
@@ -721,8 +722,11 @@ async def _save_protocol_registration(chat_id: int, user_id: int,
 
 # ── Tribute purchase delivery ────────────────────────────────────────────────
 
-# Кэш file_id PDF шпаргалки (чтобы не перезаливать каждый раз)
+# Кэш file_id PDF шпаргалки и превью-видео (чтобы не перезаливать каждый раз)
 _lesson_file_id: str | None = None
+_preview_video_file_id: str | None = None
+
+PREVIEW_VIDEO_PATH = "prew.mp4"
 
 
 async def handle_tribute_purchase(tg_id: int, payload: dict) -> None:
@@ -751,6 +755,36 @@ async def handle_tribute_purchase(tg_id: int, payload: dict) -> None:
         f"💰 {amount} ₽\n"
         f"{status}"
     )
+
+
+async def _send_preview_video(chat_id: int) -> bool:
+    """Отправляет превью-видео урока. Возвращает True если успешно."""
+    global _preview_video_file_id
+    import os
+    try:
+        if _preview_video_file_id:
+            r = await _api("sendVideo", json={
+                "chat_id": chat_id,
+                "video": _preview_video_file_id,
+                "supports_streaming": True,
+            })
+        else:
+            if not os.path.exists(PREVIEW_VIDEO_PATH):
+                logger.warning("Preview video not found: %s", PREVIEW_VIDEO_PATH)
+                return False
+            with open(PREVIEW_VIDEO_PATH, "rb") as f:
+                r = await _api("sendVideo", data={
+                    "chat_id": chat_id,
+                    "supports_streaming": "true",
+                }, files={"video": (PREVIEW_VIDEO_PATH, f, "video/mp4")})
+            if r.get("ok"):
+                _preview_video_file_id = r["result"]["video"]["file_id"]
+            else:
+                logger.error("sendVideo failed: %s", r)
+        return r.get("ok", False)
+    except Exception as e:
+        logger.error("_send_preview_video error: %s", e)
+        return False
 
 
 async def _send_lesson_pdf(chat_id: int) -> bool:
