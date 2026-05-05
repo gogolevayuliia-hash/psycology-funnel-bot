@@ -199,6 +199,13 @@ def _articles_menu_kb():
     return {"inline_keyboard": rows}
 
 
+async def _show_articles_menu(chat_id: int) -> None:
+    """Отправляет картинку-заставку рубрикатора, затем меню тем."""
+    await send_photo(chat_id, "images/cat_rubricator.png")
+    await send(chat_id, "Выберите тему — пришлю материалы из канала 👇",
+               reply_markup=_articles_menu_kb())
+
+
 def _tests_menu_kb():
     return {"inline_keyboard": [
         [{"text": "🧠 Тип привязанности", "callback_data": "start_quiz"}],
@@ -366,8 +373,7 @@ async def _handle_message(message: dict) -> None:
             await _start_talk_quiz(chat_id, user_id)
         elif param == "articles":
             await _show_persistent_menu(chat_id)
-            await send(chat_id, "Выберите тему — пришлю материалы из канала 👇",
-                       reply_markup=_articles_menu_kb())
+            await _show_articles_menu(chat_id)
         else:
             await _welcome(chat_id, user_id, username, source)
         return
@@ -438,11 +444,7 @@ async def _handle_callback(cb: dict) -> None:
         await send(chat_id, "Выбирайте 👇", reply_markup=_main_menu())
 
     elif data == "show_articles":
-        await send(
-            chat_id,
-            "Выберите тему — пришлю три материала из канала 👇",
-            reply_markup=_articles_menu_kb(),
-        )
+        await _show_articles_menu(chat_id)
 
     elif data.startswith("art_all_"):
         category_key = data[8:]
