@@ -159,9 +159,18 @@ def _main_menu():
 
 
 def _videos_menu_kb():
+    """Список всех видеоуроков."""
     return {"inline_keyboard": [
-        [{"text": "🎬 «Нам надо поговорить. Только не так.» — 990 ₽", "url": TRIPWIRE_URL}],
+        [{"text": "🎬 Нам надо поговорить. Только не так.", "callback_data": "show_video_lesson"}],
         [{"text": "← Главное меню", "callback_data": "back_to_menu"}],
+    ]}
+
+
+def _video_lesson_kb():
+    """Кнопка покупки — показывается после текста-продажи видео."""
+    return {"inline_keyboard": [
+        [{"text": "🎬 Купить урок — 990 ₽", "url": TRIPWIRE_URL}],
+        [{"text": "← Все видео", "callback_data": "show_videos"}],
     ]}
 
 
@@ -257,13 +266,6 @@ def _dep_result_kb():
         [{"text": "🔒 Записаться в клуб", "callback_data": "join_club"}],
     ]}
 
-
-def _video_lesson_kb():
-    """Кнопка покупки — показывается после текста-продажи видео."""
-    return {"inline_keyboard": [
-        [{"text": "🎬 Купить урок — 990 ₽", "url": TRIPWIRE_URL}],
-        [{"text": "🔒 Предзапись в клуб", "callback_data": "join_club"}],
-    ]}
 
 
 def _psychologist_kb():
@@ -413,10 +415,9 @@ async def _handle_callback(cb: dict) -> None:
         await send(chat_id, "Выберите тест 👇", reply_markup=_tests_menu_kb())
 
     elif data == "show_videos":
-        await _send_preview_video(chat_id)
         await send(
             chat_id,
-            "🎬 <b>Обучающие видео</b>\n\nВидеоурок с научной базой — разбираем, почему разговоры в парах рассыпаются, и как это изменить.",
+            "🎬 <b>Обучающие видео</b>\n\nВыберите урок — расскажу подробнее и покажу фрагмент 👇",
             reply_markup=_videos_menu_kb(),
         )
 
