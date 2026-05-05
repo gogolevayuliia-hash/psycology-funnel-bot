@@ -208,7 +208,7 @@ ARTICLES = {
 
 
 def format_articles(category_key: str) -> str:
-    """Форматирует 3 статьи категории в одно сообщение."""
+    """Форматирует топ-3 статьи категории в одно сообщение."""
     cat = ARTICLES[category_key]
     lines = [f"📚 <b>{cat['title']}</b>\n\nТри материала из канала — с научной базой и без воды:\n"]
     for i, post in enumerate(cat["posts"], 1):
@@ -218,3 +218,76 @@ def format_articles(category_key: str) -> str:
             f"→ {post['url']}"
         )
     return "\n\n".join(lines)
+
+
+# ── Все посты по рубрикам (из rubrics_all_posts.md) ──────────────────────────
+
+import re as _re
+from pathlib import Path as _Path
+
+_TITLE_TO_KEY = {
+    "Привязанность":    "attachment",
+    "Мужчины":          "men",
+    "Женщины":          "women",
+    "Конфликты в паре": "conflict",
+    "Неглект":          "neglect",
+    "Измены и ревность":"cheating",
+    "Нейробиология":    "neuro",
+    "Большие вопросы":  "bigq",
+    "Эмоции и срывы":   "regulation",
+    "Инфантильность":   "infantile",
+    "Другое":           "other",
+}
+
+
+def _parse_all_posts() -> dict:
+    try:
+        md = (_Path(__file__).parent / "rubrics_all_posts.md").read_text(encoding="utf-8")
+    except Exception:
+        return {}
+
+    result: dict = {}
+    for section in _re.split(r'\n---\n', md):
+        m = _re.search(r'^## (.+)$', section, _re.MULTILINE)
+        if not m:
+            continue
+        heading = m.group(1)
+        key = next((k for t, k in _TITLE_TO_KEY.items() if t in heading), None)
+        if not key:
+            continue
+
+        posts = []
+        for block in _re.split(r'\n(?=(?:★ )?\*\*)', section):
+            block = block.strip()
+            tm = _re.match(r'(?:★ )?\*\*(.+?)\*\*', block)
+            if not tm:
+                continue
+            urls = _re.findall(r'→ (https://\S+)', block)
+            if urls:
+                posts.append({"title": tm.group(1), "urls": urls})
+        if posts:
+            result[key] = posts
+    return result
+
+
+ARTICLES_ALL: dict = _parse_all_posts()
+
+
+def format_all_articles(category_key: str) -> str:
+    """Форматирует все посты категории компактным списком ссылок."""
+    title = ARTICLES.get(category_key, {}).get("title", category_key)
+    posts = ARTICLES_ALL.get(category_key, [])
+    if not posts:
+        return f"📚 <b>{title}</b>\n\nПока нет материалов в этой рубрике."
+
+    lines = [f"📚 <b>{title}</b> — все материалы ({len(posts)})\n"]
+    for i, post in enumerate(posts, 1):
+        if len(post["urls"]) == 1:
+            lines.append(f'{i}. <a href="{post["urls"][0]}">{post["title"]}</a>')
+        else:
+            # Несколько частей — показываем все ссылки
+            parts = " | ".join(
+                f'<a href="{u}">часть {j+1}</a>' for j, u in enumerate(post["urls"])
+            )
+            lines.append(f'{i}. {post["title"]} ({parts})')
+    return "\n".join(lines)

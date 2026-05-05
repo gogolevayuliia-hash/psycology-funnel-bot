@@ -28,7 +28,7 @@ from texts import (
 from config import LESSON_PDF_PATH
 import notion_leads
 import stats as _stats
-from articles import ARTICLES, format_articles
+from articles import ARTICLES, ARTICLES_ALL, format_articles, format_all_articles
 
 LETTERS = ["А", "Б", "В", "Г", "Д"]
 
@@ -151,9 +151,17 @@ def _main_menu():
         [{"text": "📄 Получить гайд бесплатно", "callback_data": "get_guide"}],
         [{"text": "🧪 Тесты", "callback_data": "show_tests"}],
         [{"text": "📚 Статьи про отношения", "callback_data": "show_articles"}],
+        [{"text": "🎬 Обучающие видео", "callback_data": "show_videos"}],
         [{"text": "🔒 Предзапись в клуб «Кубики Жизни»", "callback_data": "join_club"}],
         [{"text": "🩺 Записаться к психологу", "callback_data": "psychologist"}],
         [{"text": "🌐 Сайт", "url": SITE_URL}],
+    ]}
+
+
+def _videos_menu_kb():
+    return {"inline_keyboard": [
+        [{"text": "🎬 «Нам надо поговорить. Только не так.» — 990 ₽", "url": TRIPWIRE_URL}],
+        [{"text": "← Главное меню", "callback_data": "back_to_menu"}],
     ]}
 
 
@@ -341,6 +349,10 @@ async def _handle_message(message: dict) -> None:
         elif param == "talk":
             await _show_persistent_menu(chat_id)
             await _start_talk_quiz(chat_id, user_id)
+        elif param == "articles":
+            await _show_persistent_menu(chat_id)
+            await send(chat_id, "Выберите тему — пришлю материалы из канала 👇",
+                       reply_markup=_articles_menu_kb())
         else:
             await _welcome(chat_id, user_id, username, source)
         return
@@ -400,6 +412,17 @@ async def _handle_callback(cb: dict) -> None:
     elif data == "show_tests":
         await send(chat_id, "Выберите тест 👇", reply_markup=_tests_menu_kb())
 
+    elif data == "show_videos":
+        await _send_preview_video(chat_id)
+        await send(
+            chat_id,
+            "🎬 <b>Обучающие видео</b>\n\nВидеоурок с научной базой — разбираем, почему разговоры в парах рассыпаются, и как это изменить.",
+            reply_markup=_videos_menu_kb(),
+        )
+
+    elif data == "back_to_menu":
+        await send(chat_id, "Выбирайте 👇", reply_markup=_main_menu())
+
     elif data == "show_articles":
         await send(
             chat_id,
@@ -407,13 +430,30 @@ async def _handle_callback(cb: dict) -> None:
             reply_markup=_articles_menu_kb(),
         )
 
+    elif data.startswith("art_all_"):
+        category_key = data[8:]
+        if category_key in ARTICLES_ALL:
+            text = format_all_articles(category_key)
+            await send(
+                chat_id, text,
+                reply_markup={"inline_keyboard": [
+                    [{"text": "📣 Подписаться на канал", "url": CHANNEL_URL}],
+                    [{"text": "← Топ-3 этой темы", "callback_data": f"art_{category_key}"}],
+                    [{"text": "← Все рубрики", "callback_data": "show_articles"}],
+                ]},
+            )
+
     elif data.startswith("art_"):
         category_key = data[4:]
         if category_key in ARTICLES:
             text = format_articles(category_key)
+            # Показываем кнопку «Все посты» только если они есть
+            all_btn = []
+            if category_key in ARTICLES_ALL and len(ARTICLES_ALL[category_key]) > 3:
+                all_btn = [[{"text": "📋 Все посты по теме", "callback_data": f"art_all_{category_key}"}]]
             await send(
                 chat_id, text,
-                reply_markup={"inline_keyboard": [
+                reply_markup={"inline_keyboard": all_btn + [
                     [{"text": "📣 Подписаться на канал", "url": CHANNEL_URL}],
                     [{"text": "← Другая тема", "callback_data": "show_articles"}],
                 ]},
