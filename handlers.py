@@ -153,12 +153,12 @@ def _main_menu():
         [{"text": "📄 Получить гайд бесплатно", "callback_data": "get_guide"}],
         # Бесплатный контент
         [{"text": "🧪 Тесты", "callback_data": "show_tests"},
-         {"text": "📚 Статьи про отношения", "callback_data": "show_articles"}],
+         {"text": "📚 Рубрикатор постов", "callback_data": "show_articles"}],
         # Продукты
         [{"text": "🎬 Обучающие видео", "callback_data": "show_videos"}],
         [{"text": "🔒 Предзапись в клуб «Кубики Жизни»", "callback_data": "join_club"}],
         # Сервисы
-        [{"text": "🩺 Записаться к психологу", "callback_data": "psychologist"},
+        [{"text": "📅 Психолог", "callback_data": "psychologist"},
          {"text": "🌐 Сайт", "url": SITE_URL}],
     ]}
 
