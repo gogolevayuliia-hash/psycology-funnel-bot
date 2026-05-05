@@ -304,8 +304,7 @@ def _site_tab() -> str:
   {_card("🖱 Клики по ссылкам", _rows(clicks, cl_total, "#4a64f5"))}
   {_card("📲 Откуда пришли", _rows(sources, sr_total, "#62d6c3"))}
 </div>
-<p style="font-size:11px;color:#bbb">* Данные сайта сбрасываются при деплое · Сессия с {since}</p>
-<p style="font-size:11px;color:#bbb;margin-top:4px">* Трекинг работает только при добавлении скрипта на сайт</p>
+<p style="font-size:11px;color:#bbb">* Данные сбрасываются при деплое · Сессия с {since}</p>
 """
 
 
