@@ -268,6 +268,16 @@ def _bot_tab(s: dict) -> str:
     bot_rows = {k: v for k, v in bot_rows.items() if v > 0}
     bot_total = sum(bot_rows.values()) or 1
 
+    dl = _stats.deeplinks
+    deeplink_rows = {
+        "🧠 Тест привязанности":     dl["quiz"],
+        "📊 Тест депривации":        dl["deptest"],
+        "💬 Тест разговора":         dl["talk"],
+        "📚 Рубрикатор постов":      dl["articles"],
+    }
+    deeplink_rows = {k: v for k, v in deeplink_rows.items() if v > 0}
+    dl_total = sum(deeplink_rows.values()) or 1
+
     return f"""
 <h2 style="font-size:13px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;
     color:#888;margin:0 0 12px">Воронка (всего в Notion)</h2>
@@ -289,10 +299,11 @@ def _bot_tab(s: dict) -> str:
   {_card("💬 Тест на разговор", _rows(s.get("talk",{}), total, "#62d6c3"))}
   {_card("📚 Популярные рубрики", _rows(s.get("rubrics",{}), total, "#f4956b"))}
 </div>
-<div style="margin-bottom:12px">
-  {_card("🖱 Нажатия кнопок (текущая сессия)", _rows(bot_rows, bot_total, "#4a64f5"))}
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+  {_card("🖱 Нажатия кнопок (сессия)", _rows(bot_rows, bot_total, "#4a64f5"))}
+  {_card("🔗 Переходы по ссылкам (сессия)", _rows(deeplink_rows, dl_total, "#f4956b"))}
 </div>
-<p style="font-size:11px;color:#bbb">* Нажатия кнопок сбрасываются при каждом деплое</p>
+<p style="font-size:11px;color:#bbb">* Нажатия кнопок и переходы по ссылкам сбрасываются при каждом деплое</p>
 """
 
 

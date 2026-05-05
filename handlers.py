@@ -361,7 +361,11 @@ async def _handle_message(message: dict) -> None:
         param = text[7:].strip() if low.startswith("/start ") else None
         source = _parse_source(param)
         user_state[user_id] = {**state, "source": source}
-        # Глубокие ссылки
+        # Глубокие ссылки — считаем переходы
+        _DEEPLINK_KEYS = {"deptest", "quiz", "talk", "articles"}
+        if param in _DEEPLINK_KEYS:
+            _stats.deeplinks[param] += 1
+
         if param == "deptest":
             await _show_persistent_menu(chat_id)
             await _start_dep_quiz(chat_id, user_id)

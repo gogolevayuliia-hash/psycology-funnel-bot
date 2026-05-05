@@ -29,6 +29,10 @@ bot: Counter = Counter()
 # Ключи: quiz_attachment | quiz_deprivation | quiz_talk |
 #         guide | psychologist | video_lesson | articles | club | start
 
+# ── Глубокие ссылки (переходы извне) ─────────────────────────────────────────
+deeplinks: Counter = Counter()
+# Ключи: quiz | deptest | talk | articles
+
 # ── Сайт ─────────────────────────────────────────────────────────────────────
 site_clicks: Counter = Counter()
 # Ключи: linkProduct | linkTalk | linkQuiz | linkFree | linkClub | linkTelegram
@@ -49,6 +53,7 @@ def load() -> None:
         with open(STATS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         bot.update(data.get("bot", {}))
+        deeplinks.update(data.get("deeplinks", {}))
         site_clicks.update(data.get("site_clicks", {}))
         site_sources.update(data.get("site_sources", {}))
         site_pageviews[0] = data.get("site_pageviews", 0)
@@ -70,6 +75,7 @@ def save() -> None:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump({
                 "bot":           dict(bot),
+                "deeplinks":     dict(deeplinks),
                 "site_clicks":   dict(site_clicks),
                 "site_sources":  dict(site_sources),
                 "site_pageviews": site_pageviews[0],
