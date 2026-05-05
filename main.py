@@ -320,7 +320,7 @@ def _site_tab() -> str:
 """
 
 
-def _render(bot_html: str, site_html: str, updated: str) -> str:
+def _render(bot_html: str, site_html: str, updated: str, token: str = "") -> str:
     return f"""<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -359,7 +359,7 @@ def _render(bot_html: str, site_html: str, updated: str) -> str:
     </div>
     <small>Notion · {updated}</small>
   </div>
-  <a class="refresh-btn" href="">🔄 Обновить</a>
+  <a class="refresh-btn" href="?token={token}">🔄 Обновить</a>
 </div>
 <div class="content">
   <div id="pane-bot" class="tab-pane active">{bot_html}</div>
@@ -388,4 +388,4 @@ async def dashboard(request: Request, token: str = ""):
         notion_stats = {"total": 0, "updated_at": f"ошибка Notion: {e}"}
 
     updated = notion_stats.get("updated_at", "—")
-    return HTMLResponse(_render(_bot_tab(notion_stats), _site_tab(), updated))
+    return HTMLResponse(_render(_bot_tab(notion_stats), _site_tab(), updated, token))
