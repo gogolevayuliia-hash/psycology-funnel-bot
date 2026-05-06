@@ -325,6 +325,18 @@ async def get_registrations() -> list[dict]:
                 if row:
                     leads.append(row)
 
+        # 3. По полю Записи (накопительное поле — самый надёжный источник)
+        for keyword in ("клуб", "практикум"):
+            r = await client.post(
+                f"https://api.notion.com/v1/databases/{NOTION_LEADS_DB_ID}/query",
+                headers=HEADERS,
+                json={"filter": {"property": "Записи", "rich_text": {"contains": keyword}}},
+            )
+            for page in r.json().get("results", []):
+                row = _extract(page, override_status=f"⚠️ найден по полю Записи ({keyword})")
+                if row:
+                    leads.append(row)
+
     leads.sort(key=lambda x: x["created"])
     return leads
 
