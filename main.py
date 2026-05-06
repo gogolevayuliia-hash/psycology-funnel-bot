@@ -42,17 +42,17 @@ async def _autosave_loop() -> None:
     """Сохраняет статистику каждые N секунд."""
     while True:
         await asyncio.sleep(_stats.SAVE_INTERVAL)
-        _stats.save()
+        await _stats.save_async()
         logger.info("stats: autosaved")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    _stats.load()                          # загружаем сохранённые данные
+    await _stats.load_async()              # загружаем сохранённые данные (Redis → файл)
     await set_webhook()
     task = asyncio.create_task(_autosave_loop())
     yield
-    _stats.save()                          # сохраняем при штатном завершении
+    await _stats.save_async()             # сохраняем при штатном завершении
     task.cancel()
 
 
