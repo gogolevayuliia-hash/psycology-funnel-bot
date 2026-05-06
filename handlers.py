@@ -737,8 +737,12 @@ async def _save_club_registration(chat_id: int, user_id: int,
         attachment_type=attachment_type, status="Предзапись",
         source=source, request="клуб", deprivation_level=dep_level,
     ))
-    await send(chat_id, CLUB_CONFIRMED.format(name=name))
     tg = f"@{username}" if username else f"id{user_id}"
+    try:
+        await send(chat_id, CLUB_CONFIRMED.format(name=name))
+    except Exception as e:
+        logger.error("club confirm send failed: %s", e)
+    # notify_admin выполняется всегда — даже если send упал
     await notify_admin(
         f"🔔 <b>Новая предзапись в клуб!</b>\n\n"
         f"👤 {name} ({tg})\n"
@@ -774,8 +778,12 @@ async def _save_protocol_registration(chat_id: int, user_id: int,
         attachment_type=attachment_type, status="Предзапись практикум",
         source=source, request="практикум", deprivation_level=dep_level,
     ))
-    await send(chat_id, PROTOCOL_CONFIRMED.format(name=name))
     tg = f"@{username}" if username else f"id{user_id}"
+    try:
+        await send(chat_id, PROTOCOL_CONFIRMED.format(name=name))
+    except Exception as e:
+        logger.error("protocol confirm send failed: %s", e)
+    # notify_admin выполняется всегда
     await notify_admin(
         f"📊 <b>Предзапись на практикум!</b>\n\n"
         f"👤 {name} ({tg})\n"
