@@ -906,8 +906,10 @@ async def _send_waitlist_report(chat_id: int) -> None:
         await send(chat_id, "📋 Предзаписей в Notion пока нет.")
         return
 
-    club     = [l for l in leads if l["status"] == "Предзапись"]
-    protocol = [l for l in leads if l["status"] == "Предзапись практикум"]
+    club     = [l for l in leads if "клуб" in l["status"] or "Предзапись" == l["status"]]
+    protocol = [l for l in leads if "практикум" in l["status"] or "Предзапись практикум" == l["status"]]
+    # Остальные — те у кого статус был перезаписан, но Запрос содержит ключевое слово
+    others   = [l for l in leads if l not in club and l not in protocol]
 
     lines = [f"📋 <b>Все предзаписи из Notion</b> — {len(leads)} чел.\n"]
 
@@ -915,17 +917,21 @@ async def _send_waitlist_report(chat_id: int) -> None:
         lines.append(f"<b>🔒 Клуб «Кубики Жизни» — {len(club)} чел.</b>")
         for l in club:
             tg = l["username"] if l["username"] != "—" else f"id{l['user_id']}"
-            lines.append(
-                f"• {l['name']} | {tg} | {l['attachment']} | {l['source']} | {l['created']}"
-            )
+            flag = " ⚠️" if "перезаписан" in l["status"] else ""
+            lines.append(f"• {l['name']} | {tg} | {l['attachment']} | {l['source']} | {l['created']}{flag}")
 
     if protocol:
         lines.append(f"\n<b>📊 Практикум — {len(protocol)} чел.</b>")
         for l in protocol:
             tg = l["username"] if l["username"] != "—" else f"id{l['user_id']}"
-            lines.append(
-                f"• {l['name']} | {tg} | {l['attachment']} | {l['source']} | {l['created']}"
-            )
+            flag = " ⚠️" if "перезаписан" in l["status"] else ""
+            lines.append(f"• {l['name']} | {tg} | {l['attachment']} | {l['source']} | {l['created']}{flag}")
+
+    if others:
+        lines.append(f"\n<b>⚠️ Статус перезаписан, но запрос указывает на регистрацию — {len(others)} чел.</b>")
+        for l in others:
+            tg = l["username"] if l["username"] != "—" else f"id{l['user_id']}"
+            lines.append(f"• {l['name']} | {tg} | запрос: {l['zapros']} | {l['created']}")
 
     # Telegram ограничивает 4096 символов — режем на части если нужно
     full = "\n".join(lines)

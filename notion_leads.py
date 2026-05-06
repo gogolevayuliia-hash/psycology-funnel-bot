@@ -268,11 +268,40 @@ async def get_stats() -> dict:
 
 async def get_registrations() -> list[dict]:
     """
-    Возвращает всех людей со статусом Предзапись или Предзапись практикум.
-    Используется для команды /waitlist — восстановить пропущенные уведомления.
+    Ищет все предзаписи максимально широко:
+    1. По статусу Предзапись / Предзапись практикум
+    2. По полю Запрос содержащему 'клуб' или 'практикум'
+       (на случай если статус был перезаписан гонкой фоновых задач)
+    Дедуплицирует по page_id.
     """
-    leads = []
+    seen_ids: set[str] = set()
+    leads: list[dict] = []
+
+    def _extract(page: dict, override_status: str | None = None) -> dict | None:
+        if page["id"] in seen_ids:
+            return None
+        seen_ids.add(page["id"])
+        p = page["properties"]
+        uid  = p.get("Telegram ID", {}).get("number")
+        name_parts = (p.get("Name") or {}).get("title") or []
+        name = name_parts[0]["text"]["content"] if name_parts else "—"
+        uname_parts = (p.get("Username") or {}).get("rich_text") or []
+        username = uname_parts[0]["text"]["content"] if uname_parts else "—"
+        zapros = _txt(p, "Запрос")
+        status = override_status or _sel(p, "Статус")
+        return {
+            "user_id":    uid,
+            "name":       name,
+            "username":   username,
+            "status":     status,
+            "zapros":     zapros,
+            "source":     _sel(p, "Источник"),
+            "attachment": _sel(p, "Тип"),
+            "created":    page.get("created_time", "")[:10],
+        }
+
     async with httpx.AsyncClient(timeout=30) as client:
+        # 1. По статусу
         for status_val in ("Предзапись", "Предзапись практикум"):
             r = await client.post(
                 f"https://api.notion.com/v1/databases/{NOTION_LEADS_DB_ID}/query",
@@ -280,22 +309,22 @@ async def get_registrations() -> list[dict]:
                 json={"filter": {"property": "Статус", "select": {"equals": status_val}}},
             )
             for page in r.json().get("results", []):
-                p = page["properties"]
-                uid  = p.get("Telegram ID", {}).get("number")
-                name_parts = (p.get("Name") or {}).get("title") or []
-                name = name_parts[0]["text"]["content"] if name_parts else "—"
-                uname_parts = (p.get("Username") or {}).get("rich_text") or []
-                username = uname_parts[0]["text"]["content"] if uname_parts else "—"
-                leads.append({
-                    "user_id":    uid,
-                    "name":       name,
-                    "username":   username,
-                    "status":     _sel(p, "Статус"),
-                    "source":     _sel(p, "Источник"),
-                    "attachment": _sel(p, "Тип"),
-                    "created":    page.get("created_time", "")[:10],
-                })
-    # Сортируем по дате создания
+                row = _extract(page)
+                if row:
+                    leads.append(row)
+
+        # 2. По полю Запрос (ловим тех, у кого статус был перезаписан)
+        for keyword in ("клуб", "практикум"):
+            r = await client.post(
+                f"https://api.notion.com/v1/databases/{NOTION_LEADS_DB_ID}/query",
+                headers=HEADERS,
+                json={"filter": {"property": "Запрос", "rich_text": {"contains": keyword}}},
+            )
+            for page in r.json().get("results", []):
+                row = _extract(page, override_status=f"⚠️ статус перезаписан (был: {keyword})")
+                if row:
+                    leads.append(row)
+
     leads.sort(key=lambda x: x["created"])
     return leads
 
