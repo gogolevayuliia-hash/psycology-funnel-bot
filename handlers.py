@@ -355,6 +355,9 @@ async def _handle_message(message: dict) -> None:
         if low.startswith("/broadcast_waitlist "):
             await _do_broadcast(text[len("/broadcast_waitlist "):].strip(), waitlist_only=True)
             return
+        if low == "/waitlist":
+            await _send_waitlist_report(chat_id)
+            return
 
     # ── /start [param] ──
     if low == "/start" or low.startswith("/start "):
@@ -886,6 +889,48 @@ async def _send_lesson_pdf(chat_id: int) -> bool:
     except Exception as e:
         logger.error("_send_lesson_pdf error: %s", e)
         return False
+
+
+# ── Waitlist report ──────────────────────────────────────────────────────────
+
+async def _send_waitlist_report(chat_id: int) -> None:
+    """Отправляет все предзаписи из Notion администратору."""
+    await send(chat_id, "⏳ Загружаю список из Notion...")
+    try:
+        leads = await notion_leads.get_registrations()
+    except Exception as e:
+        await send(chat_id, f"❌ Ошибка Notion: {e}")
+        return
+
+    if not leads:
+        await send(chat_id, "📋 Предзаписей в Notion пока нет.")
+        return
+
+    club     = [l for l in leads if l["status"] == "Предзапись"]
+    protocol = [l for l in leads if l["status"] == "Предзапись практикум"]
+
+    lines = [f"📋 <b>Все предзаписи из Notion</b> — {len(leads)} чел.\n"]
+
+    if club:
+        lines.append(f"<b>🔒 Клуб «Кубики Жизни» — {len(club)} чел.</b>")
+        for l in club:
+            tg = l["username"] if l["username"] != "—" else f"id{l['user_id']}"
+            lines.append(
+                f"• {l['name']} | {tg} | {l['attachment']} | {l['source']} | {l['created']}"
+            )
+
+    if protocol:
+        lines.append(f"\n<b>📊 Практикум — {len(protocol)} чел.</b>")
+        for l in protocol:
+            tg = l["username"] if l["username"] != "—" else f"id{l['user_id']}"
+            lines.append(
+                f"• {l['name']} | {tg} | {l['attachment']} | {l['source']} | {l['created']}"
+            )
+
+    # Telegram ограничивает 4096 символов — режем на части если нужно
+    full = "\n".join(lines)
+    for i in range(0, len(full), 4000):
+        await send(chat_id, full[i:i+4000])
 
 
 # ── Broadcast ────────────────────────────────────────────────────────────────

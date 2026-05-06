@@ -266,6 +266,40 @@ async def get_stats() -> dict:
     }
 
 
+async def get_registrations() -> list[dict]:
+    """
+    Возвращает всех людей со статусом Предзапись или Предзапись практикум.
+    Используется для команды /waitlist — восстановить пропущенные уведомления.
+    """
+    leads = []
+    async with httpx.AsyncClient(timeout=30) as client:
+        for status_val in ("Предзапись", "Предзапись практикум"):
+            r = await client.post(
+                f"https://api.notion.com/v1/databases/{NOTION_LEADS_DB_ID}/query",
+                headers=HEADERS,
+                json={"filter": {"property": "Статус", "select": {"equals": status_val}}},
+            )
+            for page in r.json().get("results", []):
+                p = page["properties"]
+                uid  = p.get("Telegram ID", {}).get("number")
+                name_parts = (p.get("Name") or {}).get("title") or []
+                name = name_parts[0]["text"]["content"] if name_parts else "—"
+                uname_parts = (p.get("Username") or {}).get("rich_text") or []
+                username = uname_parts[0]["text"]["content"] if uname_parts else "—"
+                leads.append({
+                    "user_id":    uid,
+                    "name":       name,
+                    "username":   username,
+                    "status":     _sel(p, "Статус"),
+                    "source":     _sel(p, "Источник"),
+                    "attachment": _sel(p, "Тип"),
+                    "created":    page.get("created_time", "")[:10],
+                })
+    # Сортируем по дате создания
+    leads.sort(key=lambda x: x["created"])
+    return leads
+
+
 async def get_waitlist() -> list[dict]:
     async with httpx.AsyncClient(timeout=20) as client:
         r = await client.post(
