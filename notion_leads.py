@@ -23,6 +23,14 @@ from config import NOTION_TOKEN, NOTION_LEADS_DB_ID
 
 logger = logging.getLogger(__name__)
 
+# Приоритет статусов — статус не может быть понижен
+STATUS_PRIORITY = {
+    "Предзапись практикум": 4,
+    "Предзапись":           3,
+    "Получил гайд":         2,
+    "Зашёл":                1,
+}
+
 HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
     "Notion-Version": "2022-06-28",
@@ -51,12 +59,17 @@ async def upsert_lead(
     talk_pattern: str | None = None,   # результат теста на разговор
 ) -> str:
     """Create or update a lead. Returns page_id."""
-    existing = await _find_lead(user_id)
+    existing, current_status = await _find_lead(user_id)
     if existing:
+        # Не понижаем статус: «Предзапись» не перезаписывается «Получил гайд»
+        cur_pri = STATUS_PRIORITY.get(current_status or "", 0)
+        new_pri = STATUS_PRIORITY.get(status, 0)
+        effective_status = status if new_pri >= cur_pri else None
         return await _update_lead(
             existing, name=name, attachment_type=attachment_type,
-            status=status, request=request,
+            status=effective_status, request=request,
             deprivation_level=deprivation_level, talk_pattern=talk_pattern,
+            registration=status if new_pri >= STATUS_PRIORITY["Предзапись"] else None,
         )
     return await _create_lead(
         user_id, username, name, attachment_type, status, source, request,
@@ -81,7 +94,8 @@ async def log_rubric(user_id: int, rubric_title: str) -> None:
         logger.warning("log_rubric error: %s", e)
 
 
-async def _find_lead(user_id: int) -> str | None:
+async def _find_lead(user_id: int) -> tuple[str | None, str | None]:
+    """Returns (page_id, current_status) or (None, None)."""
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.post(
             f"https://api.notion.com/v1/databases/{NOTION_LEADS_DB_ID}/query",
@@ -89,7 +103,11 @@ async def _find_lead(user_id: int) -> str | None:
             json={"filter": {"property": "Telegram ID", "number": {"equals": user_id}}},
         )
         results = r.json().get("results", [])
-        return results[0]["id"] if results else None
+        if not results:
+            return None, None
+        page = results[0]
+        current_status = _sel(page["properties"], "Статус")
+        return page["id"], current_status
 
 
 async def _create_lead(user_id, username, name, attachment_type, status, source, request,
@@ -122,7 +140,12 @@ async def _create_lead(user_id, username, name, attachment_type, status, source,
 
 
 async def _update_lead(page_id: str, name=None, attachment_type=None, status=None,
-                       request=None, deprivation_level=None, talk_pattern=None) -> str:
+                       request=None, deprivation_level=None, talk_pattern=None,
+                       registration=None) -> str:
+    """
+    registration — если передан, добавляем запись в накопительное поле «Записи»
+    (клуб / практикум могут быть оба у одного человека).
+    """
     props = {}
     if name:
         props["Name"] = {"title": [{"text": {"content": name}}]}
@@ -137,6 +160,25 @@ async def _update_lead(page_id: str, name=None, attachment_type=None, status=Non
     if talk_pattern:
         label = TALK_LABELS.get(talk_pattern, talk_pattern)
         props["Тест разговора"] = {"select": {"name": label}}
+
+    # Накапливаем все регистрации в текстовом поле «Записи»
+    if registration:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                # Читаем текущее значение поля
+                r = await client.get(
+                    f"https://api.notion.com/v1/pages/{page_id}",
+                    headers=HEADERS,
+                )
+                page_props = r.json().get("properties", {})
+                existing_reg = _txt(page_props, "Записи")
+                existing_reg = "" if existing_reg == "—" else existing_reg
+                # Добавляем новую запись если её ещё нет
+                if registration not in existing_reg:
+                    new_reg = f"{existing_reg}, {registration}".lstrip(", ") if existing_reg else registration
+                    props["Записи"] = {"rich_text": [{"text": {"content": new_reg}}]}
+        except Exception as e:
+            logger.warning("_update_lead registration read error: %s", e)
 
     if not props:
         return page_id
