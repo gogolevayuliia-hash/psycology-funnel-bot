@@ -4,7 +4,7 @@ Schema (existing):
   Name (title)         — имя введённое пользователем
   Telegram ID (number) — user_id
   Username (rich_text) — @username
-  Тип (select)         — Тревожный / Избегающий / Надёжный / Тревожно-избегающий
+  Тип привязанности (select) — Тревожный / Избегающий / Надёжный / Тревожно-избегающий
   Статус (select)      — Зашёл / Получил гайд / Предзапись / Предзапись практикум
   Источник (select)    — TikTok / Instagram / YouTube / Telegram / Прямой
   Запрос (rich_text)   — последнее действие
@@ -199,7 +199,7 @@ async def _create_lead(user_id, username, name, attachment_type, status, source,
     }
     extras: dict = {}
     if attachment_type:
-        extras["Тип"] = {"select": {"name": attachment_type}}
+        extras["Тип привязанности"] = {"select": {"name": attachment_type}}
     if deprivation_level:
         extras["Депривация"] = {"select": {"name": deprivation_level}}
     if talk_pattern:
@@ -255,7 +255,7 @@ async def _update_lead(page_id: str, username=None, name=None, attachment_type=N
     if name:
         props["Name"] = {"title": [{"text": {"content": name}}]}
     if attachment_type:
-        props["Тип"] = {"select": {"name": attachment_type}}
+        props["Тип привязанности"] = {"select": {"name": attachment_type}}
     if status:
         props["Статус"] = {"select": {"name": status}}
     if request:
@@ -338,7 +338,7 @@ async def get_stats() -> dict:
             rows.append({
                 "status":      _sel(p, "Статус"),
                 "source":      _sel(p, "Источник"),
-                "attachment":  _sel(p, "Тип"),
+                "attachment":  _sel(p, "Тип привязанности"),
                 "deprivation": _sel(p, "Депривация"),
                 "talk":        _sel(p, "Тест разговора"),
                 "rubric":      _txt(p, "Рубрика"),
@@ -433,7 +433,7 @@ async def get_registrations() -> list[dict]:
             "status":     status,
             "zapros":     zapros,
             "source":     _sel(p, "Источник"),
-            "attachment": _sel(p, "Тип"),
+            "attachment": _sel(p, "Тип привязанности"),
             "created":    page.get("created_time", "")[:10],
         }
 
