@@ -120,7 +120,7 @@ async def upsert_lead(
             new_pri = STATUS_PRIORITY.get(status, 0)
             effective_status = status if new_pri >= cur_pri else None
             return await _update_lead(
-                existing, name=name, attachment_type=attachment_type,
+                existing, username=username, name=name, attachment_type=attachment_type,
                 status=effective_status, request=request,
                 deprivation_level=deprivation_level, talk_pattern=talk_pattern,
                 registration=status if new_pri >= STATUS_PRIORITY["Предзапись"] else None,
@@ -238,15 +238,20 @@ async def _create_lead(user_id, username, name, attachment_type, status, source,
         return page_id
 
 
-async def _update_lead(page_id: str, name=None, attachment_type=None, status=None,
-                       request=None, deprivation_level=None, talk_pattern=None,
-                       registration=None) -> str:
+async def _update_lead(page_id: str, username=None, name=None, attachment_type=None,
+                       status=None, request=None, deprivation_level=None,
+                       talk_pattern=None, registration=None) -> str:
     """
     registration — если передан, добавляем запись в накопительное поле «Записи»
     (клуб / практикум могут быть оба у одного человека).
-    Возвращает page_id, бросает NotionError при сбое самого PATCH.
+    Возвращает page_id. Если общий PATCH падает (например, кривая select-опция
+    в одном из полей), фоллбек — патчим каждое поле по отдельности, чтобы
+    отдельные поля прошли, а сломанное осталось в логах. NotionError
+    поднимается только если упал ВЕСЬ фоллбек.
     """
     props: dict = {}
+    if username is not None:
+        props["Username"] = {"rich_text": [{"text": {"content": f"@{username}" if username else ""}}]}
     if name:
         props["Name"] = {"title": [{"text": {"content": name}}]}
     if attachment_type:
@@ -279,10 +284,27 @@ async def _update_lead(page_id: str, name=None, attachment_type=None, status=Non
     if not props:
         return page_id
 
-    await _notion_request(
-        "PATCH", f"https://api.notion.com/v1/pages/{page_id}",
-        json_body={"properties": props},
-    )
+    url = f"https://api.notion.com/v1/pages/{page_id}"
+    try:
+        await _notion_request("PATCH", url, json_body={"properties": props})
+        return page_id
+    except NotionError as e:
+        if len(props) == 1:
+            raise
+        logger.warning("notion: bulk PATCH failed, retry per-property to save what we can: %s", e)
+
+    # Фоллбек: один PATCH на каждое поле. Если сломан Тип — Депривация всё
+    # равно сохранится. Сломанное поле останется в логах.
+    saved_any = False
+    for prop_name, prop_value in props.items():
+        try:
+            await _notion_request("PATCH", url, json_body={"properties": {prop_name: prop_value}})
+            saved_any = True
+        except NotionError as inner:
+            logger.error("notion: дроп поля %s для page=%s: %s",
+                         prop_name, page_id, inner)
+    if not saved_any:
+        raise NotionError(f"all properties failed for page {page_id}")
     return page_id
 
 
