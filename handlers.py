@@ -365,7 +365,7 @@ async def _handle_message(message: dict) -> None:
         source = _parse_source(param)
         user_state[user_id] = {**state, "source": source}
         # Глубокие ссылки — считаем переходы
-        _DEEPLINK_KEYS = {"deptest", "quiz", "talk", "articles"}
+        _DEEPLINK_KEYS = {"deptest", "quiz", "talk", "articles", "guide"}
         if param in _DEEPLINK_KEYS:
             _stats.deeplinks[param] += 1
 
@@ -381,6 +381,11 @@ async def _handle_message(message: dict) -> None:
         elif param == "articles":
             await _show_persistent_menu(chat_id)
             await _show_articles_menu(chat_id)
+        elif param == "guide":
+            # Сразу отдаём бесплатный гайд — для ссылок из соцсетей,
+            # чтобы человеку не приходилось искать кнопку.
+            await _show_persistent_menu(chat_id)
+            await _deliver_guide(chat_id, user_id, username, source, "гайд (deeplink)")
         else:
             await _welcome(chat_id, user_id, username, source)
         return
