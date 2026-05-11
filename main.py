@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import hmac
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -181,14 +182,14 @@ async def track(request: Request):
         label  = data.get("label", "")
         source = (data.get("source") or "direct").lower()
         if event == "pageview":
-            _stats.site_pageviews[0] += 1
+            asyncio.create_task(_stats.incr_async("pv"))
             if source and source != "direct":
-                _stats.site_sources[source] += 1
+                asyncio.create_task(_stats.incr_async(f"src:{source}"))
         elif event == "click" and label:
             friendly = LINK_LABELS.get(label, label)
-            _stats.site_clicks[friendly] += 1
-    except Exception:
-        pass
+            asyncio.create_task(_stats.incr_async(f"click:{friendly}"))
+    except Exception as e:
+        logger.warning("track event error: %s", e)
     return JSONResponse({"ok": True}, headers=CORS_HEADERS)
 
 
@@ -250,8 +251,11 @@ def _bot_tab(s: dict) -> str:
     if total == 0:
         return "<p style='color:#888;padding:20px 0'>Данных пока нет.</p>"
 
-    engaged = s["engaged"]
-    prereg  = s["preregistered"]
+    engaged   = s["engaged"]
+    prereg    = s["preregistered"]
+    pr_club   = s.get("prereg_club", 0)
+    pr_proto  = s.get("prereg_protocol", 0)
+    prereg_sub = f"клуб {pr_club} · практикум {pr_proto}" if (pr_club or pr_proto) else ""
 
     # in-memory кнопочная статистика
     b = _stats.bot
@@ -284,7 +288,7 @@ def _bot_tab(s: dict) -> str:
 <div style="display:flex;gap:10px;margin-bottom:24px;flex-wrap:wrap">
   {_big(total, "Зашли в бот", "#1a1a1a")}
   {_big(engaged, "Взаимодействие", "#4a64f5", _pct(engaged, total))}
-  {_big(prereg, "Предзапись", "#ee7258", _pct(prereg, total))}
+  {_big(prereg, "Предзапись", "#ee7258", prereg_sub or _pct(prereg, total))}
 </div>
 
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
@@ -303,7 +307,7 @@ def _bot_tab(s: dict) -> str:
   {_card("🖱 Нажатия кнопок (сессия)", _rows(bot_rows, bot_total, "#4a64f5"))}
   {_card("🔗 Переходы по ссылкам (сессия)", _rows(deeplink_rows, dl_total, "#f4956b"))}
 </div>
-<p style="font-size:11px;color:#bbb">* Нажатия кнопок и переходы по ссылкам сбрасываются при каждом деплое</p>
+<p style="font-size:11px;color:#bbb">* Нажатия кнопок и переходы по ссылкам бота — статистика сессии, обнуляется при деплое</p>
 """
 
 
@@ -317,7 +321,7 @@ def _site_tab() -> str:
 
     return f"""
 <h2 style="font-size:13px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;
-    color:#888;margin:0 0 12px">Посещения сайта (текущая сессия)</h2>
+    color:#888;margin:0 0 12px">Посещения сайта</h2>
 <div style="display:flex;gap:10px;margin-bottom:24px;flex-wrap:wrap">
   {_big(views, "Визитов на сайт", "#4a64f5")}
   {_big(sum(clicks.values()), "Кликов по ссылкам", "#62d6c3")}
@@ -327,11 +331,13 @@ def _site_tab() -> str:
   {_card("🖱 Клики по ссылкам", _rows(clicks, cl_total, "#4a64f5"))}
   {_card("📲 Откуда пришли", _rows(sources, sr_total, "#62d6c3"))}
 </div>
-<p style="font-size:11px;color:#bbb">* Данные сбрасываются при деплое · Сессия с {since}</p>
+<p style="font-size:11px;color:#bbb">* Данные с {since} · сохраняются в Redis при каждом событии</p>
 """
 
 
-def _render(bot_html: str, site_html: str, updated: str, token: str = "") -> str:
+def _render(bot_html: str, site_html: str, updated: str, token: str = "", tab: str = "bot") -> str:
+    active_bot  = " active" if tab != "site" else ""
+    active_site = " active" if tab == "site" else ""
     return f"""<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -365,23 +371,32 @@ def _render(bot_html: str, site_html: str, updated: str, token: str = "") -> str
   <div class="topbar-left">
     <h1>📊 Аналитика</h1>
     <div class="tabs">
-      <button class="tab active" onclick="switchTab('bot',this)">🤖 Бот</button>
-      <button class="tab" onclick="switchTab('site',this)">🌐 Сайт</button>
+      <button class="tab{active_bot}" onclick="switchTab('bot',this)">🤖 Бот</button>
+      <button class="tab{active_site}" onclick="switchTab('site',this)">🌐 Сайт</button>
     </div>
     <small>Notion · {updated}</small>
   </div>
-  <a class="refresh-btn" href="?token={token}">🔄 Обновить</a>
+  <a id="refreshBtn" class="refresh-btn" href="?token={token}&tab={tab}">🔄 Обновить</a>
 </div>
 <div class="content">
-  <div id="pane-bot" class="tab-pane active">{bot_html}</div>
-  <div id="pane-site" class="tab-pane">{site_html}</div>
+  <div id="pane-bot" class="tab-pane{active_bot}">{bot_html}</div>
+  <div id="pane-site" class="tab-pane{active_site}">{site_html}</div>
 </div>
 <script>
+const TOKEN = {json.dumps(token)};
 function switchTab(name, btn) {{
   document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.getElementById('pane-' + name).classList.add('active');
   btn.classList.add('active');
+  // Запоминаем выбранную вкладку в URL и в кнопке обновления,
+  // чтобы refresh не сбрасывал её на дефолтную «Бот».
+  const url = new URL(window.location.href);
+  url.searchParams.set('token', TOKEN);
+  url.searchParams.set('tab', name);
+  history.replaceState(null, '', url.toString());
+  const btnRefresh = document.getElementById('refreshBtn');
+  if (btnRefresh) btnRefresh.href = '?token=' + encodeURIComponent(TOKEN) + '&tab=' + name;
 }}
 </script>
 </body>
@@ -389,7 +404,7 @@ function switchTab(name, btn) {{
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard(request: Request, token: str = ""):
+async def dashboard(request: Request, token: str = "", tab: str = "bot"):
     if token != DASHBOARD_TOKEN:
         return HTMLResponse("<h2 style='padding:40px;font-family:sans-serif'>403 — доступ запрещён</h2>", status_code=403)
     try:
@@ -399,4 +414,5 @@ async def dashboard(request: Request, token: str = ""):
         notion_stats = {"total": 0, "updated_at": f"ошибка Notion: {e}"}
 
     updated = notion_stats.get("updated_at", "—")
-    return HTMLResponse(_render(_bot_tab(notion_stats), _site_tab(), updated, token))
+    active_tab = tab if tab in ("bot", "site") else "bot"
+    return HTMLResponse(_render(_bot_tab(notion_stats), _site_tab(), updated, token, active_tab))

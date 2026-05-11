@@ -21,9 +21,10 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 # ── Upstash Redis (основное хранилище) ────────────────────────────────────────
-UPSTASH_URL   = os.environ.get("UPSTASH_REDIS_URL", "")
-UPSTASH_TOKEN = os.environ.get("UPSTASH_REDIS_TOKEN", "")
-REDIS_KEY     = "psycology_bot_stats"
+UPSTASH_URL    = os.environ.get("UPSTASH_REDIS_URL", "")
+UPSTASH_TOKEN  = os.environ.get("UPSTASH_REDIS_TOKEN", "")
+REDIS_KEY      = "psycology_bot_stats"           # JSON-snapshot (метаданные + полное состояние)
+REDIS_HASH_KEY = "psycology_bot_stats_counters"  # хеш атомарных счётчиков (HINCRBY)
 
 # ── Fallback: файл (работает только если есть Railway Volume /data) ───────────
 STATS_FILE    = os.environ.get("STATS_FILE", "/data/stats.json")
@@ -86,6 +87,46 @@ async def _redis_set(data: dict) -> bool:
         return False
 
 
+async def _redis_hgetall() -> dict[str, int]:
+    """Читает все поля хеша счётчиков. Пустой dict если недоступно."""
+    if not UPSTASH_URL:
+        return {}
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            r = await client.post(
+                UPSTASH_URL,
+                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"},
+                json=["HGETALL", REDIS_HASH_KEY],
+            )
+            result = r.json().get("result") or []
+        # Upstash возвращает плоский массив [k1, v1, k2, v2, ...]
+        out: dict[str, int] = {}
+        for i in range(0, len(result), 2):
+            try:
+                out[result[i]] = int(result[i + 1])
+            except (ValueError, IndexError):
+                continue
+        return out
+    except Exception as e:
+        logger.warning("stats: redis HGETALL error: %s", e)
+        return {}
+
+
+async def _redis_hincrby(field: str, by: int = 1) -> None:
+    """Атомарный инкремент поля в хеше счётчиков. Тихо игнорирует сбой."""
+    if not UPSTASH_URL:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            await client.post(
+                UPSTASH_URL,
+                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"},
+                json=["HINCRBY", REDIS_HASH_KEY, field, str(by)],
+            )
+    except Exception as e:
+        logger.warning("stats: redis HINCRBY %s error: %s", field, e)
+
+
 # ── Serialization ─────────────────────────────────────────────────────────────
 
 def _to_dict() -> dict:
@@ -114,24 +155,54 @@ def _from_dict(data: dict) -> None:
 # ── Public API ────────────────────────────────────────────────────────────────
 
 async def load_async() -> None:
-    """Загружает данные при старте: сначала Redis, потом файл."""
-    # 1. Пробуем Redis
+    """Загружает данные при старте: сначала JSON-снимок, потом поверх — хеш счётчиков."""
+    # 1. JSON-снимок (метаданные since/saved_at + дореформенные значения)
     data = await _redis_get()
     if data:
         _from_dict(data)
-        logger.info("stats: loaded from Redis (pageviews=%s)", site_pageviews[0])
-        return
+        logger.info("stats: loaded JSON snapshot (pageviews=%s)", site_pageviews[0])
+    else:
+        try:
+            with open(STATS_FILE, "r", encoding="utf-8") as f:
+                _from_dict(json.load(f))
+            logger.info("stats: loaded from file %s (pageviews=%s)", STATS_FILE, site_pageviews[0])
+        except FileNotFoundError:
+            logger.info("stats: no saved snapshot, starting fresh")
+        except Exception as e:
+            logger.warning("stats: file load error: %s", e)
 
-    # 2. Fallback: файл
-    try:
-        with open(STATS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        _from_dict(data)
-        logger.info("stats: loaded from file %s (pageviews=%s)", STATS_FILE, site_pageviews[0])
-    except FileNotFoundError:
-        logger.info("stats: no saved data, starting fresh")
-    except Exception as e:
-        logger.warning("stats: file load error: %s", e)
+    # 2. Хеш атомарных счётчиков — источник правды, перекрывает значения снимка
+    counters = await _redis_hgetall()
+    if counters:
+        site_clicks.clear()
+        site_sources.clear()
+        pv = 0
+        for k, v in counters.items():
+            if k == "pv":
+                pv = v
+            elif k.startswith("click:"):
+                site_clicks[k[6:]] = v
+            elif k.startswith("src:"):
+                site_sources[k[4:]] = v
+        site_pageviews[0] = pv
+        logger.info("stats: loaded counters from Redis hash (pageviews=%s, clicks=%s)",
+                    pv, sum(site_clicks.values()))
+
+
+async def incr_async(field: str, by: int = 1) -> None:
+    """
+    Атомарно инкрементит счётчик (в Redis + in-memory).
+    Поддерживает поля: 'pv', 'click:<label>', 'src:<source>'.
+    """
+    # In-memory — мгновенно, для текущего процесса
+    if field == "pv":
+        site_pageviews[0] += by
+    elif field.startswith("click:"):
+        site_clicks[field[6:]] += by
+    elif field.startswith("src:"):
+        site_sources[field[4:]] += by
+    # Redis — переживает рестарты Railway, агрегирует между процессами
+    await _redis_hincrby(field, by)
 
 
 async def save_async() -> None:

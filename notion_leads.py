@@ -231,6 +231,10 @@ async def get_stats() -> dict:
                     "deprivation": _sel(p, "Депривация"),
                     "talk":        _sel(p, "Тест разговора"),
                     "rubric":      _txt(p, "Рубрика"),
+                    # Источники правды для подсчёта предзаписей (Статус могла
+                    # перезаписать гонка фоновых задач — см. handlers.py).
+                    "zapisi":      _txt(p, "Записи"),
+                    "zapros":      _txt(p, "Запрос"),
                     "created":     page.get("created_time", "")[:10],
                 })
             if not data.get("has_more"):
@@ -249,20 +253,42 @@ async def get_stats() -> dict:
     rubrics    = Counter(r["rubric"]      for r in rows if r["rubric"] != "—")
 
     # Воронка
-    engaged     = total - statuses.get("Зашёл", 0)
-    preregistered = statuses.get("Предзапись", 0) + statuses.get("Предзапись практикум", 0)
+    engaged = total - statuses.get("Зашёл", 0)
+
+    # Уникальные предзаписи — человек считается записавшимся, если выполняется
+    # хотя бы одно: статус ∈ {Предзапись, Предзапись практикум},
+    # поле «Записи» содержит «клуб» / «практикум»,
+    # поле «Запрос» содержит «клуб» / «практикум».
+    # Дедуп по строке (одна строка Notion = один человек).
+    PREREG_STATUSES = {"Предзапись", "Предзапись практикум"}
+    preregistered = 0
+    prereg_club = 0
+    prereg_protocol = 0
+    for r in rows:
+        zapisi_lc = (r["zapisi"] or "").lower()
+        zapros_lc = (r["zapros"] or "").lower()
+        is_club  = "клуб" in zapisi_lc or "клуб" in zapros_lc or r["status"] == "Предзапись"
+        is_proto = "практикум" in zapisi_lc or "практикум" in zapros_lc or r["status"] == "Предзапись практикум"
+        if is_club:
+            prereg_club += 1
+        if is_proto:
+            prereg_protocol += 1
+        if is_club or is_proto or r["status"] in PREREG_STATUSES:
+            preregistered += 1
 
     return {
-        "total":          total,
-        "engaged":        engaged,
-        "preregistered":  preregistered,
-        "statuses":       dict(statuses.most_common()),
-        "sources":        dict(sources.most_common()),
-        "attachment":     dict(attachment.most_common()),
-        "deprivation":    dict(deprivation.most_common()),
-        "talk":           dict(talk.most_common()),
-        "rubrics":        dict(rubrics.most_common(10)),
-        "updated_at":     datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M UTC"),
+        "total":            total,
+        "engaged":          engaged,
+        "preregistered":    preregistered,
+        "prereg_club":      prereg_club,
+        "prereg_protocol":  prereg_protocol,
+        "statuses":         dict(statuses.most_common()),
+        "sources":          dict(sources.most_common()),
+        "attachment":       dict(attachment.most_common()),
+        "deprivation":      dict(deprivation.most_common()),
+        "talk":             dict(talk.most_common()),
+        "rubrics":          dict(rubrics.most_common(10)),
+        "updated_at":       datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M UTC"),
     }
 
 
