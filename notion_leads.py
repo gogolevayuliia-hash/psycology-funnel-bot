@@ -1,7 +1,8 @@
 """
 Notion database for leads / waitlist.
 Schema (existing):
-  Name (title)         — имя введённое пользователем
+  Name (title)         — технический идентификатор: @username или Telegram ID
+  Имя (rich_text)      — имя, которое человек ввёл при записи в клуб/практикум
   Telegram ID (number) — user_id
   Username (rich_text) — @username
   Тип привязанности (select) — Тревожный / Избегающий / Надёжный / Тревожно-избегающий
@@ -188,8 +189,10 @@ async def _create_lead(user_id, username, name, attachment_type, status, source,
     гарантированно попадает в Notion, а реальная причина остаётся в логах.
     """
     now = datetime.now(timezone.utc).isoformat()
+    # Name (title) — технический идентификатор: @username или TG ID.
+    # Введённое при регистрации имя живёт отдельно в колонке «Имя».
     base_props = {
-        "Name":        {"title": [{"text": {"content": name or username or str(user_id)}}]},
+        "Name":        {"title": [{"text": {"content": (f"@{username}" if username else str(user_id))}}]},
         "Telegram ID": {"number": user_id},
         "Username":    {"rich_text": [{"text": {"content": f"@{username}" if username else ""}}]},
         "Статус":      {"select": {"name": status}},
@@ -198,6 +201,8 @@ async def _create_lead(user_id, username, name, attachment_type, status, source,
         "Дата":        {"date": {"start": now}},
     }
     extras: dict = {}
+    if name:
+        extras["Имя"] = {"rich_text": [{"text": {"content": name}}]}
     if attachment_type:
         extras["Тип привязанности"] = {"select": {"name": attachment_type}}
     if deprivation_level:
@@ -253,7 +258,9 @@ async def _update_lead(page_id: str, username=None, name=None, attachment_type=N
     if username is not None:
         props["Username"] = {"rich_text": [{"text": {"content": f"@{username}" if username else ""}}]}
     if name:
-        props["Name"] = {"title": [{"text": {"content": name}}]}
+        # Имя из формы записи на клуб/практикум — пишем в отдельную колонку,
+        # чтобы не затирать Name (title), который служит идентификатором.
+        props["Имя"] = {"rich_text": [{"text": {"content": name}}]}
     if attachment_type:
         props["Тип привязанности"] = {"select": {"name": attachment_type}}
     if status:
@@ -420,8 +427,14 @@ async def get_registrations() -> list[dict]:
         seen_ids.add(page["id"])
         p = page["properties"]
         uid  = p.get("Telegram ID", {}).get("number")
-        name_parts = (p.get("Name") or {}).get("title") or []
-        name = name_parts[0]["text"]["content"] if name_parts else "—"
+        # Предпочитаем введённое при регистрации имя из колонки «Имя»,
+        # фоллбек — Name (title), чтобы записи до миграции тоже показывались.
+        imya = _txt(p, "Имя")
+        if imya != "—":
+            name = imya
+        else:
+            name_parts = (p.get("Name") or {}).get("title") or []
+            name = name_parts[0]["text"]["content"] if name_parts else "—"
         uname_parts = (p.get("Username") or {}).get("rich_text") or []
         username = uname_parts[0]["text"]["content"] if uname_parts else "—"
         zapros = _txt(p, "Запрос")
