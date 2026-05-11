@@ -15,6 +15,9 @@ Schema (existing):
 New fields (добавить в Notion вручную):
   Тест разговора (select) — Критик / Презрение / Оборона / Стена / Надёжный
   Рубрика (rich_text)     — последняя выбранная рубрика статей
+  Точка побега (select)   — П1 / П2-Т / П2-О / П2-Н / П2-Смешанный /
+                            П3-Т / П3-О / П3-Н / П3-Смешанный /
+                            П4-Т / П4-О / П4-Н / П4-Смешанный
 """
 import asyncio
 import logging
@@ -103,6 +106,7 @@ async def upsert_lead(
     request: str = "/start",
     deprivation_level: str | None = None,
     talk_pattern: str | None = None,   # результат теста на разговор
+    escape_result: str | None = None,  # результат теста «Точка побега» (П1…П4-Смешанный)
 ) -> str | None:
     """
     Create or update a lead. Returns page_id on success, None on Notion failure
@@ -124,11 +128,12 @@ async def upsert_lead(
                 existing, username=username, name=name, attachment_type=attachment_type,
                 status=effective_status, request=request,
                 deprivation_level=deprivation_level, talk_pattern=talk_pattern,
+                escape_result=escape_result,
                 registration=status if new_pri >= STATUS_PRIORITY["Предзапись"] else None,
             )
         return await _create_lead(
             user_id, username, name, attachment_type, status, source, request,
-            deprivation_level, talk_pattern,
+            deprivation_level, talk_pattern, escape_result,
         )
     except NotionError:
         return None
@@ -181,7 +186,7 @@ async def _find_lead(user_id: int) -> tuple[str | None, str | None]:
 
 
 async def _create_lead(user_id, username, name, attachment_type, status, source, request,
-                       deprivation_level=None, talk_pattern=None) -> str:
+                       deprivation_level=None, talk_pattern=None, escape_result=None) -> str:
     """
     Создаёт лид. Если запись с дополнительным полем (Тип/Депривация/Тест разговора)
     падает по validation_error (например, опции select нет в схеме), повторяем
@@ -210,6 +215,8 @@ async def _create_lead(user_id, username, name, attachment_type, status, source,
     if talk_pattern:
         label = TALK_LABELS.get(talk_pattern, talk_pattern)
         extras["Тест разговора"] = {"select": {"name": label}}
+    if escape_result:
+        extras["Точка побега"] = {"select": {"name": escape_result}}
 
     try:
         data = await _notion_request(
@@ -245,7 +252,7 @@ async def _create_lead(user_id, username, name, attachment_type, status, source,
 
 async def _update_lead(page_id: str, username=None, name=None, attachment_type=None,
                        status=None, request=None, deprivation_level=None,
-                       talk_pattern=None, registration=None) -> str:
+                       talk_pattern=None, escape_result=None, registration=None) -> str:
     """
     registration — если передан, добавляем запись в накопительное поле «Записи»
     (клуб / практикум могут быть оба у одного человека).
@@ -272,6 +279,8 @@ async def _update_lead(page_id: str, username=None, name=None, attachment_type=N
     if talk_pattern:
         label = TALK_LABELS.get(talk_pattern, talk_pattern)
         props["Тест разговора"] = {"select": {"name": label}}
+    if escape_result:
+        props["Точка побега"] = {"select": {"name": escape_result}}
 
     # Накапливаем все регистрации в текстовом поле «Записи»
     if registration:
@@ -348,6 +357,7 @@ async def get_stats() -> dict:
                 "attachment":  _sel(p, "Тип привязанности"),
                 "deprivation": _sel(p, "Депривация"),
                 "talk":        _sel(p, "Тест разговора"),
+                "escape":      _sel(p, "Точка побега"),
                 "rubric":      _txt(p, "Рубрика"),
                 # Источники правды для подсчёта предзаписей (Статус могла
                 # перезаписать гонка фоновых задач — см. handlers.py).
@@ -368,6 +378,7 @@ async def get_stats() -> dict:
     attachment = Counter(r["attachment"]  for r in rows if r["attachment"] != "—")
     deprivation= Counter(r["deprivation"] for r in rows if r["deprivation"] != "—")
     talk       = Counter(r["talk"]        for r in rows if r["talk"] != "—")
+    escape     = Counter(r["escape"]      for r in rows if r["escape"] != "—")
     rubrics    = Counter(r["rubric"]      for r in rows if r["rubric"] != "—")
 
     # Воронка
@@ -405,6 +416,7 @@ async def get_stats() -> dict:
         "attachment":       dict(attachment.most_common()),
         "deprivation":      dict(deprivation.most_common()),
         "talk":             dict(talk.most_common()),
+        "escape":           dict(escape.most_common()),
         "rubrics":          dict(rubrics.most_common(10)),
         "updated_at":       datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M UTC"),
     }

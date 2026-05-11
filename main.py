@@ -161,6 +161,7 @@ CORS_HEADERS = {
 
 LINK_LABELS = {
     "linkProduct":  "🎬 Видеоурок",
+    "linkEscape":   "🚪 Точка побега",
     "linkTalk":     "💬 Тест на разговор",
     "linkQuiz":     "🧠 Тест привязанности",
     "linkFree":     "📄 Гайд",
@@ -260,14 +261,15 @@ def _bot_tab(s: dict) -> str:
     # in-memory кнопочная статистика
     b = _stats.bot
     bot_rows = {
-        "🧠 Тест привязанности":  b["quiz_attachment"],
-        "📊 Тест депривации":     b["quiz_deprivation"],
-        "💬 Тест на разговор":    b["quiz_talk"],
-        "📄 Гайд":                b["guide"],
-        "🎬 Видеоурок (детали)":  b["video_lesson"],
-        "🩺 Психолог":            b["psychologist"],
-        "🔒 Клуб":                b["club"],
-        "📋 Практикум":           b["protocol"],
+        "🧠 Тест привязанности":     b["quiz_attachment"],
+        "🚪 Тест «Точка побега»":    b["quiz_escape"],
+        "💔 Тест «Эмоциональный голод»": b["quiz_deprivation"],
+        "💬 Тест на разговор":       b["quiz_talk"],
+        "📄 Гайд":                   b["guide"],
+        "🎬 Видеоурок (детали)":     b["video_lesson"],
+        "🩺 Психолог":               b["psychologist"],
+        "🔒 Клуб":                   b["club"],
+        "📋 Практикум":              b["protocol"],
     }
     bot_rows = {k: v for k, v in bot_rows.items() if v > 0}
     bot_total = sum(bot_rows.values()) or 1
@@ -275,7 +277,8 @@ def _bot_tab(s: dict) -> str:
     dl = _stats.deeplinks
     deeplink_rows = {
         "🧠 Тест привязанности":     dl["quiz"],
-        "📊 Тест депривации":        dl["deptest"],
+        "🚪 Точка побега":           dl["escape"],
+        "💔 Эмоциональный голод":    dl["deptest"],
         "💬 Тест разговора":         dl["talk"],
         "📚 Рубрикатор постов":      dl["articles"],
         "📄 Гайд":                   dl["guide"],
@@ -298,10 +301,13 @@ def _bot_tab(s: dict) -> str:
 </div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
   {_card("🧠 Тест привязанности", _rows(s.get("attachment",{}), total, "#4a64f5"))}
-  {_card("📊 Депривация", _rows(s.get("deprivation",{}), total, "#ee7258"))}
+  {_card("💔 Эмоциональный голод", _rows(s.get("deprivation",{}), total, "#ee7258"))}
 </div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+  {_card("🚪 Точка побега", _rows(s.get("escape",{}), total, "#cc4f35"))}
   {_card("💬 Тест на разговор", _rows(s.get("talk",{}), total, "#62d6c3"))}
+</div>
+<div style="margin-bottom:12px">
   {_card("📚 Популярные рубрики", _rows(s.get("rubrics",{}), total, "#f4956b"))}
 </div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">

@@ -1,9 +1,10 @@
 """
 Handlers for the marketing funnel bot.
 Flows: /start → menu → guide / quiz / club / lesson
-       quiz → 8 questions → result → deprivation quiz (anxious only)
-       deprivation quiz → 10 questions → result → protocol pre-reg
+       quiz → 8 questions → result → «Эмоциональный голод» test (anxious only)
+       «Эмоциональный голод» (dep_quiz) → 10 questions → result → protocol pre-reg
        talk_quiz → 5 questions → result → video lesson link
+       escape_quiz → 12 questions → result → club / hunger test / protocol
 """
 import asyncio
 import json
@@ -19,6 +20,10 @@ from deprivation_quiz import (
 from conversation_quiz import (
     QUESTIONS as TALK_Q, RESULTS as TALK_R,
     calculate_result as talk_result,
+)
+from escape_quiz import (
+    QUESTIONS as ESC_Q, RESULTS as ESC_R,
+    calculate_result as escape_result,
 )
 from texts import (
     WELCOME, GUIDE_CAPTION, CLUB_INVITE, CLUB_CONFIRMED,
@@ -43,7 +48,7 @@ logger = logging.getLogger(__name__)
 BASE = f"https://api.telegram.org/bot{MARKETING_BOT_TOKEN}"
 
 # ── In-memory state ──────────────────────────────────────────────────────────
-# step values: None | "quiz" | "dep_quiz" | "talk_quiz" | "awaiting_name" | "awaiting_protocol_name"
+# step values: None | "quiz" | "dep_quiz" | "talk_quiz" | "escape_quiz" | "awaiting_name" | "awaiting_protocol_name"
 user_state: dict[int, dict] = {}
 
 # Cached file_ids (avoid re-uploading on every send)
@@ -209,7 +214,8 @@ async def _show_articles_menu(chat_id: int) -> None:
 def _tests_menu_kb():
     return {"inline_keyboard": [
         [{"text": "🧠 Тип привязанности", "callback_data": "start_quiz"}],
-        [{"text": "📊 Эмоциональная депривация", "callback_data": "start_dep_quiz"}],
+        [{"text": "🚪 Точка побега: как вы уходите от себя", "callback_data": "start_escape_quiz"}],
+        [{"text": "💔 Эмоциональный голод", "callback_data": "start_dep_quiz"}],
         [{"text": "💬 Как вы говорите в конфликте", "callback_data": "start_talk_quiz"}],
     ]}
 
@@ -245,6 +251,37 @@ def _talk_quiz_kb(q_index: int):
     ]}
 
 
+def _escape_quiz_kb(q_index: int):
+    q = ESC_Q[q_index]
+    return {"inline_keyboard": [
+        [{"text": LETTERS[i], "callback_data": f"eq_{q_index}_{i}"}]
+        for i in range(len(q["options"]))
+    ]}
+
+
+def _escape_result_kb(route: str):
+    """
+    Клавиатура после результата «Точки побега» зависит от того, куда ведёт тип:
+      club     — П1 → клуб
+      hunger   — П2-О → тест «Эмоциональный голод»
+      protocol — остальные → практикум
+    """
+    if route == "club":
+        return {"inline_keyboard": [
+            [{"text": "🔒 Записаться в клуб «Кубики Жизни»", "callback_data": "join_club"}],
+        ]}
+    if route == "hunger":
+        return {"inline_keyboard": [
+            [{"text": "💔 Пройти тест «Эмоциональный голод»", "callback_data": "start_dep_quiz"}],
+            [{"text": "📋 Записаться на практикум", "callback_data": "join_protocol"}],
+        ]}
+    # protocol
+    return {"inline_keyboard": [
+        [{"text": "📋 Записаться на практикум", "callback_data": "join_protocol"}],
+        [{"text": "🔒 Предзапись в клуб", "callback_data": "join_club"}],
+    ]}
+
+
 def _talk_result_kb():
     return {"inline_keyboard": [
         [{"text": "🎬 Урок про разговоры — подробнее", "callback_data": "show_video_lesson"}],
@@ -254,7 +291,7 @@ def _talk_result_kb():
 
 def _anxious_result_kb():
     return {"inline_keyboard": [
-        [{"text": "📊 Пройти расширенный тест", "callback_data": "start_dep_quiz"}],
+        [{"text": "💔 Пройти тест «Эмоциональный голод»", "callback_data": "start_dep_quiz"}],
         [{"text": "📋 Хочу узнать про «Практикум»", "callback_data": "join_protocol"}],
         [{"text": "🔒 Предзапись в клуб", "callback_data": "join_club"}],
     ]}
@@ -365,7 +402,7 @@ async def _handle_message(message: dict) -> None:
         source = _parse_source(param)
         user_state[user_id] = {**state, "source": source}
         # Глубокие ссылки — считаем переходы
-        _DEEPLINK_KEYS = {"deptest", "quiz", "talk", "articles", "guide"}
+        _DEEPLINK_KEYS = {"deptest", "quiz", "talk", "articles", "guide", "escape"}
         if param in _DEEPLINK_KEYS:
             _stats.deeplinks[param] += 1
 
@@ -378,6 +415,9 @@ async def _handle_message(message: dict) -> None:
         elif param == "talk":
             await _show_persistent_menu(chat_id)
             await _start_talk_quiz(chat_id, user_id)
+        elif param == "escape":
+            await _show_persistent_menu(chat_id)
+            await _start_escape_quiz(chat_id, user_id)
         elif param == "articles":
             await _show_persistent_menu(chat_id)
             await _show_articles_menu(chat_id)
@@ -514,6 +554,14 @@ async def _handle_callback(cb: dict) -> None:
         _, q_idx, opt_idx = data.split("_")
         await _process_talk_answer(chat_id, user_id, int(q_idx), int(opt_idx))
 
+    elif data == "start_escape_quiz":
+        _stats.bot["quiz_escape"] += 1
+        await _start_escape_quiz(chat_id, user_id)
+
+    elif data.startswith("eq_"):
+        _, q_idx, opt_idx = data.split("_")
+        await _process_escape_answer(chat_id, user_id, username, int(q_idx), int(opt_idx))
+
     elif data == "show_video_lesson":
         _stats.bot["video_lesson"] += 1
         await _send_preview_video(chat_id)
@@ -630,7 +678,7 @@ async def _start_dep_quiz(chat_id: int, user_id: int) -> None:
     await send_photo(
         chat_id, "images/dep_cover.png",
         caption=(
-            "📊 <b>Расширенный тест: эмоциональная депривация</b>\n\n"
+            "💔 <b>Тест «Эмоциональный голод»</b>\n\n"
             "Тревожная привязанность часто идёт вместе с эмоциональной депривацией "
             "разной глубины. 10 вопросов помогут понять, где именно и насколько.\n\n"
             "Результат — конкретная схема, не общее описание. Выбирайте то, что "
@@ -722,6 +770,70 @@ async def _process_talk_answer(chat_id: int, user_id: int,
             status="Получил гайд", source=source,
             request="тест разговора", talk_pattern=pattern,
         ))
+
+
+# ── Escape quiz («Точка побега») ─────────────────────────────────────────────
+
+async def _start_escape_quiz(chat_id: int, user_id: int) -> None:
+    prev = user_state.get(user_id, {})
+    user_state[user_id] = {**prev, "step": "escape_quiz",
+                            "esc_answers": [], "esc_index": 0}
+    await send_photo(
+        chat_id, "images/escape_cover.png",
+        caption=(
+            "🚪 <b>Тест «Точка побега: как вы уходите от себя»</b>\n\n"
+            "Не про отношения и не про конфликт — а про то, как вы избегаете контакта "
+            "с самим собой. Тест определит вашу основную стратегию побега: тревожный "
+            "контакт, отключение или гиперпродуктивность. И насколько она захватила "
+            "вашу жизнь.\n\n"
+            "12 вопросов. Выбирайте то, что больше похоже на реальность — не на ту, "
+            "которой хотелось бы."
+        ),
+    )
+    await send(chat_id, _build_question_text(ESC_Q[0]), reply_markup=_escape_quiz_kb(0))
+
+
+async def _process_escape_answer(chat_id: int, user_id: int, username: str | None,
+                                   q_index: int, opt_index: int) -> None:
+    state = user_state.get(user_id, {})
+    if state.get("step") != "escape_quiz" or state.get("esc_index") != q_index:
+        return
+
+    opt = ESC_Q[q_index]["options"][opt_index]
+    # (label, total_score, pattern_or_None)
+    state["esc_answers"].append((opt[1], opt[2]))
+    next_idx = q_index + 1
+
+    if next_idx < len(ESC_Q):
+        state["esc_index"] = next_idx
+        await send(chat_id, _build_question_text(ESC_Q[next_idx]),
+                   reply_markup=_escape_quiz_kb(next_idx))
+        return
+
+    code = escape_result(state["esc_answers"])
+    # Если каким-то образом получили незнакомый код — фоллбек на ближайший
+    # «Смешанный» соответствующего уровня, чтобы не упасть.
+    if code not in ESC_R:
+        level = code.split("-", 1)[0] if "-" in code else "П1"
+        code = f"{level}-Смешанный" if level != "П1" else "П1"
+    r = ESC_R[code]
+    source = state.get("source", "Прямой")
+    user_state[user_id] = {**state, "step": None, "escape_result": code}
+
+    try:
+        await send_photo(chat_id, r["image"])
+    except Exception:
+        # Картинки пока не загружены — пропускаем, не ломаем тест.
+        pass
+    await send(chat_id, f"<b>{r['title']}</b>\n\n{r['text']}",
+               reply_markup=_escape_result_kb(r["route"]))
+    await send(chat_id, CHANNEL_INVITE_TEXT,
+               reply_markup={"inline_keyboard": [[{"text": "📣 Подписаться на канал", "url": CHANNEL_URL}]]})
+    asyncio.create_task(notion_leads.upsert_lead(
+        user_id=user_id, username=username,
+        status="Получил гайд", source=source,
+        request="тест Точка побега", escape_result=code,
+    ))
 
 
 # ── Club registration ────────────────────────────────────────────────────────
