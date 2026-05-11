@@ -735,24 +735,27 @@ async def _save_club_registration(chat_id: int, user_id: int,
     dep_level = prev.get("dep_level")
     user_state[user_id] = {**prev, "step": None}
 
-    asyncio.create_task(notion_leads.upsert_lead(
+    # Критичная регистрация — ждём результат, чтобы алерт админу отразил
+    # реальное положение дел в Notion (а не только факт нажатия кнопки).
+    page_id = await notion_leads.upsert_lead(
         user_id=user_id, username=username, name=name,
         attachment_type=attachment_type, status="Предзапись",
         source=source, request="клуб", deprivation_level=dep_level,
-    ))
+    )
     tg = f"@{username}" if username else f"id{user_id}"
     try:
         await send(chat_id, CLUB_CONFIRMED.format(name=name))
     except Exception as e:
         logger.error("club confirm send failed: %s", e)
-    # notify_admin выполняется всегда — даже если send упал
+    notion_flag = "✅ сохранено" if page_id else "❌ <b>НЕ сохранилось в Notion</b> — добавьте вручную!"
     await notify_admin(
         f"🔔 <b>Новая предзапись в клуб!</b>\n\n"
         f"👤 {name} ({tg})\n"
         f"🆔 <code>{user_id}</code>\n"
         f"🧠 Тип: {attachment_type or 'тест не проходил(а)'}\n"
         f"📊 Депривация: {dep_level or 'тест не проходил(а)'}\n"
-        f"📲 Источник: {source}"
+        f"📲 Источник: {source}\n"
+        f"📝 Notion: {notion_flag}"
     )
 
 
@@ -776,24 +779,26 @@ async def _save_protocol_registration(chat_id: int, user_id: int,
     dep_level = prev.get("dep_level")
     user_state[user_id] = {**prev, "step": None}
 
-    asyncio.create_task(notion_leads.upsert_lead(
+    # Критичная регистрация — ждём результат Notion.
+    page_id = await notion_leads.upsert_lead(
         user_id=user_id, username=username, name=name,
         attachment_type=attachment_type, status="Предзапись практикум",
         source=source, request="практикум", deprivation_level=dep_level,
-    ))
+    )
     tg = f"@{username}" if username else f"id{user_id}"
     try:
         await send(chat_id, PROTOCOL_CONFIRMED.format(name=name))
     except Exception as e:
         logger.error("protocol confirm send failed: %s", e)
-    # notify_admin выполняется всегда
+    notion_flag = "✅ сохранено" if page_id else "❌ <b>НЕ сохранилось в Notion</b> — добавьте вручную!"
     await notify_admin(
         f"📊 <b>Предзапись на практикум!</b>\n\n"
         f"👤 {name} ({tg})\n"
         f"🆔 <code>{user_id}</code>\n"
         f"🧠 Тип: {attachment_type or '—'}\n"
         f"📊 Депривация: {dep_level or '—'}\n"
-        f"📲 Источник: {source}"
+        f"📲 Источник: {source}\n"
+        f"📝 Notion: {notion_flag}"
     )
 
 

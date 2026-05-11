@@ -15,6 +15,7 @@ New fields (добавить в Notion вручную):
   Тест разговора (select) — Критик / Презрение / Оборона / Стена / Надёжный
   Рубрика (rich_text)     — последняя выбранная рубрика статей
 """
+import asyncio
 import logging
 import httpx
 from collections import Counter
@@ -22,6 +23,50 @@ from datetime import datetime, timezone
 from config import NOTION_TOKEN, NOTION_LEADS_DB_ID
 
 logger = logging.getLogger(__name__)
+
+
+# ── HTTP helper with status check + 429 retry ────────────────────────────────
+
+class NotionError(Exception):
+    """Поднимается когда Notion возвращает не-2xx после ретраев."""
+
+
+async def _notion_request(method: str, url: str, *, json_body: dict | None = None,
+                          timeout: float = 15.0, max_retries: int = 2) -> dict:
+    """
+    Единая обёртка над httpx с проверкой статуса и ретраем на 429.
+    Бросает NotionError при неуспехе — вызывающий код решает что делать.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                r = await client.request(method, url, headers=HEADERS, json=json_body)
+            if r.status_code == 429:
+                # Rate limit. Retry-After из заголовка, иначе 1s бэкофф.
+                wait = float(r.headers.get("Retry-After", 1.0))
+                logger.warning("notion: 429 rate limit, retry in %ss (attempt %s/%s)",
+                               wait, attempt + 1, max_retries + 1)
+                await asyncio.sleep(wait)
+                continue
+            if r.status_code >= 400:
+                # Тело ответа — критично для диагностики (object_not_found,
+                # validation_error, имя несуществующей select-опции и т.п.).
+                body = r.text[:800]
+                logger.error("notion: %s %s → %s: %s", method, url.split("/")[-1],
+                             r.status_code, body)
+                raise NotionError(f"Notion {r.status_code}: {body}")
+            return r.json()
+        except (httpx.RequestError, httpx.HTTPError) as e:
+            last_exc = e
+            logger.warning("notion: network error (attempt %s/%s): %s",
+                           attempt + 1, max_retries + 1, e)
+            if attempt < max_retries:
+                await asyncio.sleep(0.5 * (attempt + 1))
+                continue
+            raise NotionError(f"Notion network error: {e}") from e
+    # Все попытки на 429 исчерпаны.
+    raise NotionError(f"Notion 429 after {max_retries + 1} attempts") from last_exc
 
 # Приоритет статусов — статус не может быть понижен
 STATUS_PRIORITY = {
@@ -57,63 +102,93 @@ async def upsert_lead(
     request: str = "/start",
     deprivation_level: str | None = None,
     talk_pattern: str | None = None,   # результат теста на разговор
-) -> str:
-    """Create or update a lead. Returns page_id."""
-    existing, current_status = await _find_lead(user_id)
-    if existing:
-        # Не понижаем статус: «Предзапись» не перезаписывается «Получил гайд»
-        cur_pri = STATUS_PRIORITY.get(current_status or "", 0)
-        new_pri = STATUS_PRIORITY.get(status, 0)
-        effective_status = status if new_pri >= cur_pri else None
-        return await _update_lead(
-            existing, name=name, attachment_type=attachment_type,
-            status=effective_status, request=request,
-            deprivation_level=deprivation_level, talk_pattern=talk_pattern,
-            registration=status if new_pri >= STATUS_PRIORITY["Предзапись"] else None,
+) -> str | None:
+    """
+    Create or update a lead. Returns page_id on success, None on Notion failure
+    (полное тело ошибки уже в логах). Вызывающий код решает, поднимать ли
+    тревогу админу.
+    """
+    try:
+        existing, current_status = await _find_lead(user_id)
+    except NotionError:
+        return None
+
+    try:
+        if existing:
+            # Не понижаем статус: «Предзапись» не перезаписывается «Получил гайд»
+            cur_pri = STATUS_PRIORITY.get(current_status or "", 0)
+            new_pri = STATUS_PRIORITY.get(status, 0)
+            effective_status = status if new_pri >= cur_pri else None
+            return await _update_lead(
+                existing, name=name, attachment_type=attachment_type,
+                status=effective_status, request=request,
+                deprivation_level=deprivation_level, talk_pattern=talk_pattern,
+                registration=status if new_pri >= STATUS_PRIORITY["Предзапись"] else None,
+            )
+        return await _create_lead(
+            user_id, username, name, attachment_type, status, source, request,
+            deprivation_level, talk_pattern,
         )
-    return await _create_lead(
-        user_id, username, name, attachment_type, status, source, request,
-        deprivation_level, talk_pattern,
-    )
+    except NotionError:
+        return None
+    except Exception:
+        # Любая непредвиденная ошибка не должна утекать в asyncio как
+        # «Task exception was never retrieved» — для fire-and-forget вызовов.
+        logger.exception("upsert_lead unexpected error (user_id=%s)", user_id)
+        return None
+
+
+async def safe_upsert_lead(**kwargs) -> None:
+    """
+    Fire-and-forget обёртка для некритичных мест (тесты, /start) — гарантирует,
+    что исключение не утечёт в asyncio как «Task exception was never retrieved».
+    Ошибка уже залогирована в _notion_request.
+    """
+    await upsert_lead(**kwargs)
 
 
 async def log_rubric(user_id: int, rubric_title: str) -> None:
     """Записывает последнюю выбранную рубрику статей."""
-    existing = await _find_lead(user_id)
+    try:
+        existing, _ = await _find_lead(user_id)
+    except NotionError:
+        return
     if not existing:
         return
     props = {"Рубрика": {"rich_text": [{"text": {"content": rubric_title}}]}}
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            await client.patch(
-                f"https://api.notion.com/v1/pages/{existing}",
-                headers=HEADERS,
-                json={"properties": props},
-            )
-    except Exception as e:
-        logger.warning("log_rubric error: %s", e)
+        await _notion_request(
+            "PATCH", f"https://api.notion.com/v1/pages/{existing}",
+            json_body={"properties": props},
+        )
+    except NotionError:
+        pass  # уже залогировано в _notion_request
 
 
 async def _find_lead(user_id: int) -> tuple[str | None, str | None]:
-    """Returns (page_id, current_status) or (None, None)."""
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.post(
-            f"https://api.notion.com/v1/databases/{NOTION_LEADS_DB_ID}/query",
-            headers=HEADERS,
-            json={"filter": {"property": "Telegram ID", "number": {"equals": user_id}}},
-        )
-        results = r.json().get("results", [])
-        if not results:
-            return None, None
-        page = results[0]
-        current_status = _sel(page["properties"], "Статус")
-        return page["id"], current_status
+    """Returns (page_id, current_status) or (None, None). Бросает NotionError при сбое."""
+    data = await _notion_request(
+        "POST", f"https://api.notion.com/v1/databases/{NOTION_LEADS_DB_ID}/query",
+        json_body={"filter": {"property": "Telegram ID", "number": {"equals": user_id}}},
+    )
+    results = data.get("results", [])
+    if not results:
+        return None, None
+    page = results[0]
+    current_status = _sel(page["properties"], "Статус")
+    return page["id"], current_status
 
 
 async def _create_lead(user_id, username, name, attachment_type, status, source, request,
                        deprivation_level=None, talk_pattern=None) -> str:
+    """
+    Создаёт лид. Если запись с дополнительным полем (Тип/Депривация/Тест разговора)
+    падает по validation_error (например, опции select нет в схеме), повторяем
+    создание без этого поля и добавляем его отдельным PATCH-ом. Так базовый лид
+    гарантированно попадает в Notion, а реальная причина остаётся в логах.
+    """
     now = datetime.now(timezone.utc).isoformat()
-    props = {
+    base_props = {
         "Name":        {"title": [{"text": {"content": name or username or str(user_id)}}]},
         "Telegram ID": {"number": user_id},
         "Username":    {"rich_text": [{"text": {"content": f"@{username}" if username else ""}}]},
@@ -122,21 +197,45 @@ async def _create_lead(user_id, username, name, attachment_type, status, source,
         "Запрос":      {"rich_text": [{"text": {"content": request}}]},
         "Дата":        {"date": {"start": now}},
     }
+    extras: dict = {}
     if attachment_type:
-        props["Тип"] = {"select": {"name": attachment_type}}
+        extras["Тип"] = {"select": {"name": attachment_type}}
     if deprivation_level:
-        props["Депривация"] = {"select": {"name": deprivation_level}}
+        extras["Депривация"] = {"select": {"name": deprivation_level}}
     if talk_pattern:
         label = TALK_LABELS.get(talk_pattern, talk_pattern)
-        props["Тест разговора"] = {"select": {"name": label}}
+        extras["Тест разговора"] = {"select": {"name": label}}
 
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.post(
-            "https://api.notion.com/v1/pages",
-            headers=HEADERS,
-            json={"parent": {"database_id": NOTION_LEADS_DB_ID}, "properties": props},
+    try:
+        data = await _notion_request(
+            "POST", "https://api.notion.com/v1/pages",
+            json_body={"parent": {"database_id": NOTION_LEADS_DB_ID},
+                       "properties": {**base_props, **extras}},
         )
-        return r.json().get("id", "")
+        return data.get("id", "")
+    except NotionError as e:
+        if not extras:
+            raise
+        logger.warning("notion: create with extras failed, retry base-only: %s", e)
+        # Базовый лид — без проблемных полей.
+        data = await _notion_request(
+            "POST", "https://api.notion.com/v1/pages",
+            json_body={"parent": {"database_id": NOTION_LEADS_DB_ID},
+                       "properties": base_props},
+        )
+        page_id = data.get("id", "")
+        # Пытаемся добавить extras по одному — какое-то поле, скорее всего,
+        # сломано (несуществующая select-опция или поле). Остальные сохраним.
+        for prop_name, prop_value in extras.items():
+            try:
+                await _notion_request(
+                    "PATCH", f"https://api.notion.com/v1/pages/{page_id}",
+                    json_body={"properties": {prop_name: prop_value}},
+                )
+            except NotionError as inner:
+                logger.error("notion: дроп поля %s для user=%s: %s",
+                             prop_name, user_id, inner)
+        return page_id
 
 
 async def _update_lead(page_id: str, name=None, attachment_type=None, status=None,
@@ -145,8 +244,9 @@ async def _update_lead(page_id: str, name=None, attachment_type=None, status=Non
     """
     registration — если передан, добавляем запись в накопительное поле «Записи»
     (клуб / практикум могут быть оба у одного человека).
+    Возвращает page_id, бросает NotionError при сбое самого PATCH.
     """
-    props = {}
+    props: dict = {}
     if name:
         props["Name"] = {"title": [{"text": {"content": name}}]}
     if attachment_type:
@@ -164,34 +264,25 @@ async def _update_lead(page_id: str, name=None, attachment_type=None, status=Non
     # Накапливаем все регистрации в текстовом поле «Записи»
     if registration:
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                # Читаем текущее значение поля
-                r = await client.get(
-                    f"https://api.notion.com/v1/pages/{page_id}",
-                    headers=HEADERS,
-                )
-                page_props = r.json().get("properties", {})
-                existing_reg = _txt(page_props, "Записи")
-                existing_reg = "" if existing_reg == "—" else existing_reg
-                # Добавляем новую запись если её ещё нет
-                if registration not in existing_reg:
-                    new_reg = f"{existing_reg}, {registration}".lstrip(", ") if existing_reg else registration
-                    props["Записи"] = {"rich_text": [{"text": {"content": new_reg}}]}
-        except Exception as e:
-            logger.warning("_update_lead registration read error: %s", e)
+            data = await _notion_request(
+                "GET", f"https://api.notion.com/v1/pages/{page_id}",
+            )
+            page_props = data.get("properties", {})
+            existing_reg = _txt(page_props, "Записи")
+            existing_reg = "" if existing_reg == "—" else existing_reg
+            if registration not in existing_reg:
+                new_reg = f"{existing_reg}, {registration}".lstrip(", ") if existing_reg else registration
+                props["Записи"] = {"rich_text": [{"text": {"content": new_reg}}]}
+        except NotionError as e:
+            logger.warning("_update_lead read «Записи» failed: %s", e)
 
     if not props:
         return page_id
 
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            await client.patch(
-                f"https://api.notion.com/v1/pages/{page_id}",
-                headers=HEADERS,
-                json={"properties": props},
-            )
-    except Exception as e:
-        logger.warning("_update_lead error: %s", e)
+    await _notion_request(
+        "PATCH", f"https://api.notion.com/v1/pages/{page_id}",
+        json_body={"properties": props},
+    )
     return page_id
 
 
@@ -212,34 +303,32 @@ async def get_stats() -> dict:
     """Выгружает все лиды из Notion и возвращает агрегированную статистику."""
     rows = []
     cursor = None
-    async with httpx.AsyncClient(timeout=60) as client:
-        while True:
-            body: dict = {"page_size": 100}
-            if cursor:
-                body["start_cursor"] = cursor
-            r = await client.post(
-                f"https://api.notion.com/v1/databases/{NOTION_LEADS_DB_ID}/query",
-                headers=HEADERS, json=body,
-            )
-            data = r.json()
-            for page in data.get("results", []):
-                p = page["properties"]
-                rows.append({
-                    "status":      _sel(p, "Статус"),
-                    "source":      _sel(p, "Источник"),
-                    "attachment":  _sel(p, "Тип"),
-                    "deprivation": _sel(p, "Депривация"),
-                    "talk":        _sel(p, "Тест разговора"),
-                    "rubric":      _txt(p, "Рубрика"),
-                    # Источники правды для подсчёта предзаписей (Статус могла
-                    # перезаписать гонка фоновых задач — см. handlers.py).
-                    "zapisi":      _txt(p, "Записи"),
-                    "zapros":      _txt(p, "Запрос"),
-                    "created":     page.get("created_time", "")[:10],
-                })
-            if not data.get("has_more"):
-                break
-            cursor = data.get("next_cursor")
+    while True:
+        body: dict = {"page_size": 100}
+        if cursor:
+            body["start_cursor"] = cursor
+        data = await _notion_request(
+            "POST", f"https://api.notion.com/v1/databases/{NOTION_LEADS_DB_ID}/query",
+            json_body=body, timeout=60.0,
+        )
+        for page in data.get("results", []):
+            p = page["properties"]
+            rows.append({
+                "status":      _sel(p, "Статус"),
+                "source":      _sel(p, "Источник"),
+                "attachment":  _sel(p, "Тип"),
+                "deprivation": _sel(p, "Депривация"),
+                "talk":        _sel(p, "Тест разговора"),
+                "rubric":      _txt(p, "Рубрика"),
+                # Источники правды для подсчёта предзаписей (Статус могла
+                # перезаписать гонка фоновых задач — см. handlers.py).
+                "zapisi":      _txt(p, "Записи"),
+                "zapros":      _txt(p, "Запрос"),
+                "created":     page.get("created_time", "")[:10],
+            })
+        if not data.get("has_more"):
+            break
+        cursor = data.get("next_cursor")
 
     total = len(rows)
     if total == 0:
@@ -326,57 +415,65 @@ async def get_registrations() -> list[dict]:
             "created":    page.get("created_time", "")[:10],
         }
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        # 1. По статусу
-        for status_val in ("Предзапись", "Предзапись практикум"):
-            r = await client.post(
-                f"https://api.notion.com/v1/databases/{NOTION_LEADS_DB_ID}/query",
-                headers=HEADERS,
-                json={"filter": {"property": "Статус", "select": {"equals": status_val}}},
-            )
-            for page in r.json().get("results", []):
-                row = _extract(page)
-                if row:
-                    leads.append(row)
+    url = f"https://api.notion.com/v1/databases/{NOTION_LEADS_DB_ID}/query"
 
-        # 2. По полю Запрос (ловим тех, у кого статус был перезаписан)
-        for keyword in ("клуб", "практикум"):
-            r = await client.post(
-                f"https://api.notion.com/v1/databases/{NOTION_LEADS_DB_ID}/query",
-                headers=HEADERS,
-                json={"filter": {"property": "Запрос", "rich_text": {"contains": keyword}}},
+    # 1. По статусу
+    for status_val in ("Предзапись", "Предзапись практикум"):
+        try:
+            data = await _notion_request(
+                "POST", url, timeout=30.0,
+                json_body={"filter": {"property": "Статус", "select": {"equals": status_val}}},
             )
-            for page in r.json().get("results", []):
-                row = _extract(page, override_status=f"⚠️ статус перезаписан (был: {keyword})")
-                if row:
-                    leads.append(row)
+        except NotionError:
+            continue
+        for page in data.get("results", []):
+            row = _extract(page)
+            if row:
+                leads.append(row)
 
-        # 3. По полю Записи (накопительное поле — самый надёжный источник)
-        for keyword in ("клуб", "практикум"):
-            r = await client.post(
-                f"https://api.notion.com/v1/databases/{NOTION_LEADS_DB_ID}/query",
-                headers=HEADERS,
-                json={"filter": {"property": "Записи", "rich_text": {"contains": keyword}}},
+    # 2. По полю Запрос (ловим тех, у кого статус был перезаписан)
+    for keyword in ("клуб", "практикум"):
+        try:
+            data = await _notion_request(
+                "POST", url, timeout=30.0,
+                json_body={"filter": {"property": "Запрос", "rich_text": {"contains": keyword}}},
             )
-            for page in r.json().get("results", []):
-                row = _extract(page, override_status=f"⚠️ найден по полю Записи ({keyword})")
-                if row:
-                    leads.append(row)
+        except NotionError:
+            continue
+        for page in data.get("results", []):
+            row = _extract(page, override_status=f"⚠️ статус перезаписан (был: {keyword})")
+            if row:
+                leads.append(row)
+
+    # 3. По полю Записи (накопительное поле — самый надёжный источник)
+    for keyword in ("клуб", "практикум"):
+        try:
+            data = await _notion_request(
+                "POST", url, timeout=30.0,
+                json_body={"filter": {"property": "Записи", "rich_text": {"contains": keyword}}},
+            )
+        except NotionError:
+            continue
+        for page in data.get("results", []):
+            row = _extract(page, override_status=f"⚠️ найден по полю Записи ({keyword})")
+            if row:
+                leads.append(row)
 
     leads.sort(key=lambda x: x["created"])
     return leads
 
 
 async def get_waitlist() -> list[dict]:
-    async with httpx.AsyncClient(timeout=20) as client:
-        r = await client.post(
-            f"https://api.notion.com/v1/databases/{NOTION_LEADS_DB_ID}/query",
-            headers=HEADERS,
-            json={"filter": {"property": "Статус", "select": {"equals": "Предзапись"}}},
+    try:
+        data = await _notion_request(
+            "POST", f"https://api.notion.com/v1/databases/{NOTION_LEADS_DB_ID}/query",
+            timeout=20.0,
+            json_body={"filter": {"property": "Статус", "select": {"equals": "Предзапись"}}},
         )
-        results = r.json().get("results", [])
+    except NotionError:
+        return []
     leads = []
-    for page in results:
+    for page in data.get("results", []):
         uid = page["properties"].get("Telegram ID", {}).get("number")
         if uid:
             leads.append({"user_id": int(uid)})
@@ -386,21 +483,22 @@ async def get_waitlist() -> list[dict]:
 async def get_all_leads() -> list[dict]:
     leads = []
     cursor = None
-    async with httpx.AsyncClient(timeout=30) as client:
-        while True:
-            body: dict = {}
-            if cursor:
-                body["start_cursor"] = cursor
-            r = await client.post(
-                f"https://api.notion.com/v1/databases/{NOTION_LEADS_DB_ID}/query",
-                headers=HEADERS, json=body,
+    while True:
+        body: dict = {}
+        if cursor:
+            body["start_cursor"] = cursor
+        try:
+            data = await _notion_request(
+                "POST", f"https://api.notion.com/v1/databases/{NOTION_LEADS_DB_ID}/query",
+                json_body=body, timeout=30.0,
             )
-            data = r.json()
-            for page in data.get("results", []):
-                uid = page["properties"].get("Telegram ID", {}).get("number")
-                if uid:
-                    leads.append({"user_id": int(uid)})
-            if not data.get("has_more"):
-                break
-            cursor = data.get("next_cursor")
+        except NotionError:
+            break
+        for page in data.get("results", []):
+            uid = page["properties"].get("Telegram ID", {}).get("number")
+            if uid:
+                leads.append({"user_id": int(uid)})
+        if not data.get("has_more"):
+            break
+        cursor = data.get("next_cursor")
     return leads
