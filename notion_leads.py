@@ -42,20 +42,27 @@ async def _notion_request(method: str, url: str, *, json_body: dict | None = Non
     Бросает NotionError при неуспехе — вызывающий код решает что делать.
     """
     last_exc: Exception | None = None
+    last_body: str = ""
     for attempt in range(max_retries + 1):
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 r = await client.request(method, url, headers=HEADERS, json=json_body)
-            if r.status_code == 429:
-                # Rate limit. Retry-After из заголовка, иначе 1s бэкофф.
-                wait = float(r.headers.get("Retry-After", 1.0))
-                logger.warning("notion: 429 rate limit, retry in %ss (attempt %s/%s)",
-                               wait, attempt + 1, max_retries + 1)
-                await asyncio.sleep(wait)
-                continue
+            # Транзиентные сбои Notion — 429 (rate limit) и 5xx (внутренние
+            # ошибки сервера). Ретраим с бэкоффом, чтобы единичные «икоты» не
+            # роняли дашборд и не теряли запись лида.
+            if r.status_code == 429 or r.status_code >= 500:
+                wait = float(r.headers.get("Retry-After", 1.0 + attempt))
+                last_body = r.text[:800]
+                logger.warning("notion: %s transient %s, retry in %ss (attempt %s/%s)",
+                               method, r.status_code, wait, attempt + 1, max_retries + 1)
+                if attempt < max_retries:
+                    await asyncio.sleep(wait)
+                    continue
+                raise NotionError(f"Notion {r.status_code} after retries: {last_body}")
             if r.status_code >= 400:
-                # Тело ответа — критично для диагностики (object_not_found,
-                # validation_error, имя несуществующей select-опции и т.п.).
+                # 4xx (кроме 429) — клиентская ошибка, ретраить бесполезно.
+                # Тело критично для диагностики (validation_error, имя
+                # несуществующей select-опции и т.п.).
                 body = r.text[:800]
                 logger.error("notion: %s %s → %s: %s", method, url.split("/")[-1],
                              r.status_code, body)
@@ -69,8 +76,7 @@ async def _notion_request(method: str, url: str, *, json_body: dict | None = Non
                 await asyncio.sleep(0.5 * (attempt + 1))
                 continue
             raise NotionError(f"Notion network error: {e}") from e
-    # Все попытки на 429 исчерпаны.
-    raise NotionError(f"Notion 429 after {max_retries + 1} attempts") from last_exc
+    raise NotionError(f"Notion transient after {max_retries + 1} attempts") from last_exc
 
 # Приоритет статусов — статус не может быть понижен
 STATUS_PRIORITY = {

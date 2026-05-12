@@ -414,12 +414,18 @@ function switchTab(name, btn) {{
 async def dashboard(request: Request, token: str = "", tab: str = "bot"):
     if token != DASHBOARD_TOKEN:
         return HTMLResponse("<h2 style='padding:40px;font-family:sans-serif'>403 — доступ запрещён</h2>", status_code=403)
+    notion_error: str | None = None
     try:
         notion_stats = await notion_leads.get_stats()
     except Exception as e:
         logger.error("dashboard notion error: %s", e)
-        notion_stats = {"total": 0, "updated_at": f"ошибка Notion: {e}"}
+        # Полный текст идёт в логи; в UI показываем короткий хинт + advice.
+        notion_error = str(e).split(":", 1)[0][:60]
+        notion_stats = {"total": 0}
 
-    updated = notion_stats.get("updated_at", "—")
+    if notion_error:
+        updated = f"⚠️ Notion временно недоступен ({notion_error}) · обновите через минуту"
+    else:
+        updated = notion_stats.get("updated_at", "—")
     active_tab = tab if tab in ("bot", "site") else "bot"
     return HTMLResponse(_render(_bot_tab(notion_stats), _site_tab(), updated, token, active_tab))
