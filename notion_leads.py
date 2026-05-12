@@ -159,6 +159,29 @@ async def safe_upsert_lead(**kwargs) -> None:
     await upsert_lead(**kwargs)
 
 
+async def audit_upsert(**kwargs) -> str | None:
+    """
+    Обёртка над upsert_lead, которая ОБЯЗАТЕЛЬНО логирует результат с user_id.
+    Используется в fire-and-forget вызовах — чтобы по логам Railway можно было
+    сопоставить количество /start и квизов с реальными записями в Notion и
+    поймать любой пропавший лид.
+    """
+    user_id = kwargs.get("user_id")
+    request = kwargs.get("request")
+    try:
+        page_id = await upsert_lead(**kwargs)
+    except Exception:
+        logger.exception("notion: audit_upsert crashed user_id=%s req=%s", user_id, request)
+        return None
+    if page_id:
+        logger.info("notion: lead saved user_id=%s req=%s page=%s",
+                    user_id, request, page_id[:8])
+    else:
+        logger.error("notion: LEAD LOST user_id=%s req=%s — нужно добавить вручную",
+                     user_id, request)
+    return page_id
+
+
 async def log_rubric(user_id: int, rubric_title: str) -> None:
     """Записывает последнюю выбранную рубрику статей."""
     try:

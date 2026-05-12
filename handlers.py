@@ -401,6 +401,10 @@ async def _handle_message(message: dict) -> None:
         param = text[7:].strip() if low.startswith("/start ") else None
         source = _parse_source(param)
         user_state[user_id] = {**state, "source": source}
+        # Строка для аудита: можно сравнить количество /start с числом новых
+        # лидов в Notion и поймать тихие потери при рестартах Railway.
+        logger.info("/start user_id=%s @%s param=%r source=%s",
+                    user_id, username, param, source)
         # Глубокие ссылки — считаем переходы
         _DEEPLINK_KEYS = {"deptest", "quiz", "talk", "articles", "guide", "escape"}
         if param in _DEEPLINK_KEYS:
@@ -474,6 +478,10 @@ async def _handle_callback(cb: dict) -> None:
     data = cb.get("data", "")
 
     await _api("answerCallbackQuery", json={"callback_query_id": cb["id"]})
+
+    # Аудит активности по кнопкам — каждое касание видно в Deploy Logs.
+    # Полезно сопоставить с записями в Notion и dashboard-счётчиками.
+    logger.info("callback %s user_id=%s @%s", data, user_id, username)
 
     state = user_state.get(user_id, {})
     source = state.get("source", "Прямой")
@@ -585,7 +593,7 @@ async def _handle_callback(cb: dict) -> None:
 async def _welcome(chat_id: int, user_id: int, username: str | None,
                    source: str = "Прямой") -> None:
     # Notion пишем в фоне — не блокируем ответ пользователю
-    asyncio.create_task(notion_leads.upsert_lead(
+    asyncio.create_task(notion_leads.audit_upsert(
         user_id=user_id, username=username,
         status="Зашёл", source=source, request="/start",
     ))
@@ -598,7 +606,7 @@ async def _deliver_guide(chat_id: int, user_id: int, username: str | None,
                           source: str, request: str) -> None:
     ok = await send_guide(chat_id, reply_markup=_after_guide_kb())
     if ok:
-        asyncio.create_task(notion_leads.upsert_lead(
+        asyncio.create_task(notion_leads.audit_upsert(
             user_id=user_id, username=username,
             status="Получил гайд", source=source, request=request,
         ))
@@ -662,7 +670,7 @@ async def _show_quiz_result(chat_id: int, user_id: int, username: str | None,
     await send(chat_id, f"<b>{r['title']}</b>\n\n{r['text']}", reply_markup=kb)
     await send(chat_id, CHANNEL_INVITE_TEXT,
                reply_markup={"inline_keyboard": [[{"text": "📣 Подписаться на канал", "url": CHANNEL_URL}]]})
-    asyncio.create_task(notion_leads.upsert_lead(
+    asyncio.create_task(notion_leads.audit_upsert(
         user_id=user_id, username=username,
         attachment_type=attachment_type,
         status="Получил гайд", source=source, request="тест",
@@ -713,7 +721,7 @@ async def _process_dep_answer(chat_id: int, user_id: int, username: str | None,
         await send(chat_id, f"<b>{r['title']}</b>\n\n{r['text']}", reply_markup=_dep_result_kb())
         await send(chat_id, CHANNEL_INVITE_TEXT,
                    reply_markup={"inline_keyboard": [[{"text": "📣 Подписаться на канал", "url": CHANNEL_URL}]]})
-        asyncio.create_task(notion_leads.upsert_lead(
+        asyncio.create_task(notion_leads.audit_upsert(
             user_id=user_id, username=username,
             attachment_type=attachment_type,
             status="Получил гайд", source=source,
@@ -765,7 +773,7 @@ async def _process_talk_answer(chat_id: int, user_id: int,
                    reply_markup=_talk_result_kb())
         await send(chat_id, CHANNEL_INVITE_TEXT,
                    reply_markup={"inline_keyboard": [[{"text": "📣 Подписаться на канал", "url": CHANNEL_URL}]]})
-        asyncio.create_task(notion_leads.upsert_lead(
+        asyncio.create_task(notion_leads.audit_upsert(
             user_id=user_id, username=None,
             status="Получил гайд", source=source,
             request="тест разговора", talk_pattern=pattern,
@@ -829,7 +837,7 @@ async def _process_escape_answer(chat_id: int, user_id: int, username: str | Non
                reply_markup=_escape_result_kb(r["route"]))
     await send(chat_id, CHANNEL_INVITE_TEXT,
                reply_markup={"inline_keyboard": [[{"text": "📣 Подписаться на канал", "url": CHANNEL_URL}]]})
-    asyncio.create_task(notion_leads.upsert_lead(
+    asyncio.create_task(notion_leads.audit_upsert(
         user_id=user_id, username=username,
         status="Получил гайд", source=source,
         request="тест Точка побега", escape_result=code,
