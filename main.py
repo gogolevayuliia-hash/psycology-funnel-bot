@@ -348,7 +348,7 @@ def _site_tab() -> str:
   {_card("🖱 Клики по ссылкам", _rows(clicks, cl_total, "#4a64f5"))}
   {_card("📲 Откуда пришли", _rows(sources, sr_total, "#62d6c3"))}
 </div>
-<p style="font-size:11px;color:#bbb">* Данные с {since} · сохраняются в Redis/файл при каждом событии · фильтр периода не применяется (нет таймстампов на событиях)</p>
+<p style="font-size:11px;color:#bbb">* Данные с {since} · сохраняются в Redis при каждом событии · агрегаты за всё время (без разбивки по дням)</p>
 """
 
 
@@ -370,8 +370,11 @@ def _render(bot_html: str, site_html: str, updated: str, token: str = "",
         return (f'<a class="{cls}" href="?token={token}&tab={tab}&period={p}">'
                 f'{PERIOD_LABELS[p]}</a>')
 
+    # Фильтр периода применим только к Notion-данным (где есть created_time).
+    # Для вкладки «Сайт» прячем — счётчики там агрегатные, без таймстампов.
+    period_bar_display = "none" if tab == "site" else "flex"
     period_bar = (
-        '<div class="period-bar">' +
+        f'<div class="period-bar" id="periodBar" style="display:{period_bar_display}">' +
         "".join(_period_btn(p) for p in ("all", "today", "7d", "30d")) +
         '</div>'
     )
@@ -452,6 +455,9 @@ function switchTab(name, btn) {{
     u.searchParams.set('tab', name);
     a.href = u.pathname + u.search;
   }});
+  // На вкладке «Сайт» фильтр периода неактуален (агрегаты без таймстампов).
+  const periodBar = document.getElementById('periodBar');
+  if (periodBar) periodBar.style.display = (name === 'site') ? 'none' : 'flex';
 }}
 </script>
 </body>
