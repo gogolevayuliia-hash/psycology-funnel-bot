@@ -174,7 +174,7 @@ QUESTIONS = [
 RESULTS: dict = {
     "П1": {
         "title": "П1 — Стабильная точка",
-        "image": "images/escape_p1.png",
+        "image": "images/escape_p1.jpg",
         "route": "club",
         "text": (
             "Вы в контакте со своей эмоциональной жизнью — не идеально, но достаточно. "
@@ -194,7 +194,7 @@ RESULTS: dict = {
     },
     "П2-Т": {
         "title": "П2-Т — Тревожный контакт",
-        "image": "images/escape_p2_t.png",
+        "image": "images/escape_p2_t.jpg",
         "route": "protocol",
         "text": (
             "Ваша основная стратегия — вернуть связь с близким. Тревога идёт наружу: "
@@ -212,7 +212,7 @@ RESULTS: dict = {
     },
     "П2-О": {
         "title": "П2-О — Отключение",
-        "image": "images/escape_p2_o.png",
+        "image": "images/escape_p2_o.jpg",
         "route": "hunger",
         "text": (
             "Ваш паттерн — переключиться. Не потому что вы «не умеете» чувствовать. "
@@ -230,7 +230,7 @@ RESULTS: dict = {
     },
     "П2-Н": {
         "title": "П2-Н — Гиперпродуктивность",
-        "image": "images/escape_p2_n.png",
+        "image": "images/escape_p2_n.jpg",
         "route": "protocol",
         "text": (
             "Ваш способ справляться — делать. Пока вы заняты, внутренний шум стихает. "
@@ -248,7 +248,7 @@ RESULTS: dict = {
     },
     "П2-Смешанный": {
         "title": "П2-Смешанный — Смешанный паттерн",
-        "image": "images/escape_p2_mixed.png",
+        "image": "images/escape_p2_mixed.jpg",
         "route": "protocol",
         "text": (
             "Ваши ответы не складываются в один чёткий маршрут — вы пользуетесь "
@@ -265,7 +265,7 @@ RESULTS: dict = {
     },
     "П3-Т": {
         "title": "П3-Т — Тревожный контакт (выраженный)",
-        "image": "images/escape_p3_t.png",
+        "image": "images/escape_p3_t.jpg",
         "route": "protocol",
         "text": (
             "Ваши отношения стали главной точкой регуляции. Не потому что партнёр плохой "
@@ -284,7 +284,7 @@ RESULTS: dict = {
     },
     "П3-О": {
         "title": "П3-О — Отключение (выраженное)",
-        "image": "images/escape_p3_o.png",
+        "image": "images/escape_p3_o.jpg",
         "route": "protocol",
         "text": (
             "На этом уровне отключение перестало быть «иногда» и стало фоновым режимом. "
@@ -302,7 +302,7 @@ RESULTS: dict = {
     },
     "П3-Н": {
         "title": "П3-Н — Гиперпродуктивность (выраженная)",
-        "image": "images/escape_p3_n.png",
+        "image": "images/escape_p3_n.jpg",
         "route": "protocol",
         "text": (
             "На этом уровне занятость — не образ жизни. Это способ не встречаться с собой.\n\n"
@@ -319,7 +319,7 @@ RESULTS: dict = {
     },
     "П3-Смешанный": {
         "title": "П3-Смешанный — Смешанный паттерн (выраженный)",
-        "image": "images/escape_p3_mixed.png",
+        "image": "images/escape_p3_mixed.jpg",
         "route": "protocol",
         "text": (
             "У вас нет одного любимого маршрута — у вас их несколько, и все они "
@@ -338,7 +338,7 @@ RESULTS: dict = {
     },
     "П4-Т": {
         "title": "П4-Т — Тревожный контакт (глубокий)",
-        "image": "images/escape_p4_t.png",
+        "image": "images/escape_p4_t.jpg",
         "route": "protocol",
         "text": (
             "На этом уровне отношения перестали быть частью жизни — они стали самой "
@@ -356,7 +356,7 @@ RESULTS: dict = {
     },
     "П4-О": {
         "title": "П4-О — Отключение (глубокое)",
-        "image": "images/escape_p4_o.png",
+        "image": "images/escape_p4_o.jpg",
         "route": "protocol",
         "text": (
             "На этом уровне связь с собственным эмоциональным миром почти утеряна. "
@@ -374,7 +374,7 @@ RESULTS: dict = {
     },
     "П4-Н": {
         "title": "П4-Н — Гиперпродуктивность (глубокая)",
-        "image": "images/escape_p4_n.png",
+        "image": "images/escape_p4_n.jpg",
         "route": "protocol",
         "text": (
             "На этом уровне вы, вероятно, очень много достигаете. И при этом не очень "
@@ -394,7 +394,7 @@ RESULTS: dict = {
     },
     "П4-Смешанный": {
         "title": "П4-Смешанный",
-        "image": "images/escape_p4_mixed.png",
+        "image": "images/escape_p4_mixed.jpg",
         "route": "protocol",
         "text": (
             "У вас нет одного «любимого» способа убегать — их несколько. В зависимости "

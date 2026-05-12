@@ -25,6 +25,7 @@ UPSTASH_URL    = os.environ.get("UPSTASH_REDIS_URL", "")
 UPSTASH_TOKEN  = os.environ.get("UPSTASH_REDIS_TOKEN", "")
 REDIS_KEY      = "psycology_bot_stats"           # JSON-snapshot (метаданные + полное состояние)
 REDIS_HASH_KEY = "psycology_bot_stats_counters"  # хеш атомарных счётчиков (HINCRBY)
+REDIS_FILE_IDS_KEY = "psycology_bot_file_ids"    # хеш { локальный_путь → telegram file_id }
 
 # ── Fallback: файл (работает только если есть Railway Volume /data) ───────────
 STATS_FILE    = os.environ.get("STATS_FILE", "/data/stats.json")
@@ -110,6 +111,41 @@ async def _redis_hgetall() -> dict[str, int]:
     except Exception as e:
         logger.warning("stats: redis HGETALL error: %s", e)
         return {}
+
+
+# ── Telegram file_id cache (HSET/HGET) ────────────────────────────────────────
+# Цель: первый аплоад файла в Telegram занимает время; полученный file_id
+# можно использовать повторно вместо повторной загрузки. Кэш в Redis, чтобы
+# переживал деплои.
+
+async def file_id_get(path: str) -> str | None:
+    if not UPSTASH_URL:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            r = await client.post(
+                UPSTASH_URL,
+                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"},
+                json=["HGET", REDIS_FILE_IDS_KEY, path],
+            )
+            return r.json().get("result")
+    except Exception as e:
+        logger.warning("stats: file_id HGET %s error: %s", path, e)
+        return None
+
+
+async def file_id_set(path: str, file_id: str) -> None:
+    if not UPSTASH_URL or not file_id:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            await client.post(
+                UPSTASH_URL,
+                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"},
+                json=["HSET", REDIS_FILE_IDS_KEY, path, file_id],
+            )
+    except Exception as e:
+        logger.warning("stats: file_id HSET %s error: %s", path, e)
 
 
 async def _redis_hincrby(field: str, by: int = 1) -> None:

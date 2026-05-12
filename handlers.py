@@ -88,10 +88,17 @@ async def send(chat_id: int, text: str, reply_markup=None) -> dict:
 
 async def send_photo(chat_id: int, image_path: str, caption: str = "",
                      reply_markup=None) -> bool:
-    """Send photo using cached file_id or upload fresh."""
+    """Send photo using cached file_id (memory → Redis → upload)."""
     global _photo_cache
     try:
+        # 1. In-memory кэш текущего процесса.
         cached = _photo_cache.get(image_path)
+        # 2. Redis-кэш — переживает рестарты Railway.
+        if not cached:
+            cached = await _stats.file_id_get(image_path)
+            if cached:
+                _photo_cache[image_path] = cached
+
         payload = {"chat_id": chat_id, "parse_mode": "HTML",
                    "disable_web_page_preview": True}
         if caption:
@@ -113,7 +120,10 @@ async def send_photo(chat_id: int, image_path: str, caption: str = "",
                 r = await _api("sendPhoto", data=upload_payload,
                                 files={"photo": (f"img.{ext}", f)})
             if r.get("ok"):
-                _photo_cache[image_path] = r["result"]["photo"][-1]["file_id"]
+                file_id = r["result"]["photo"][-1]["file_id"]
+                _photo_cache[image_path] = file_id
+                # Сохраняем в Redis в фоне — следующий деплой получит готовый id.
+                asyncio.create_task(_stats.file_id_set(image_path, file_id))
             else:
                 logger.error("sendPhoto failed: %s", r)
         return r.get("ok", False)
@@ -129,6 +139,11 @@ async def send_guide(chat_id: int, reply_markup=None) -> bool:
     if reply_markup:
         payload["reply_markup"] = reply_markup
     try:
+        # Аналогично send_photo: память → Redis → upload.
+        if not _guide_file_id:
+            cached = await _stats.file_id_get(GUIDE_PDF_PATH)
+            if cached:
+                _guide_file_id = cached
         if _guide_file_id:
             r = await _api("sendDocument", json={**payload, "document": _guide_file_id})
         else:
@@ -143,6 +158,7 @@ async def send_guide(chat_id: int, reply_markup=None) -> bool:
                                 files={"document": f})
             if r.get("ok"):
                 _guide_file_id = r["result"]["document"]["file_id"]
+                asyncio.create_task(_stats.file_id_set(GUIDE_PDF_PATH, _guide_file_id))
             else:
                 logger.error("sendDocument failed: %s", r)
         return r.get("ok", False)
@@ -787,7 +803,7 @@ async def _start_escape_quiz(chat_id: int, user_id: int) -> None:
     user_state[user_id] = {**prev, "step": "escape_quiz",
                             "esc_answers": [], "esc_index": 0}
     await send_photo(
-        chat_id, "images/escape_cover.png",
+        chat_id, "images/escape_cover.jpg",
         caption=(
             "🚪 <b>Тест «Точка побега: как вы уходите от себя»</b>\n\n"
             "Не про отношения и не про конфликт — а про то, как вы избегаете контакта "
