@@ -16,7 +16,7 @@ import logging
 import os
 import httpx
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,8 @@ UPSTASH_TOKEN  = os.environ.get("UPSTASH_REDIS_TOKEN", "")
 REDIS_KEY      = "psycology_bot_stats"           # JSON-snapshot (метаданные + полное состояние)
 REDIS_HASH_KEY = "psycology_bot_stats_counters"  # хеш атомарных счётчиков (HINCRBY)
 REDIS_FILE_IDS_KEY = "psycology_bot_file_ids"    # хеш { локальный_путь → telegram file_id }
+REDIS_EVENTS_PREFIX = "psycology_events:"        # дневные хеши событий: psycology_events:YYYY-MM-DD
+EVENTS_TTL_SECONDS = 90 * 86400                  # храним сырые дневные счётчики 90 дней
 
 # ── Fallback: файл (работает только если есть Railway Volume /data) ───────────
 STATS_FILE    = os.environ.get("STATS_FILE", "/data/stats.json")
@@ -163,6 +165,41 @@ async def _redis_hincrby(field: str, by: int = 1) -> None:
         logger.warning("stats: redis HINCRBY %s error: %s", field, e)
 
 
+async def _redis_pipeline(commands: list[list[str]]) -> list | None:
+    """
+    Отправляет пачку Redis-команд одним HTTP-запросом через Upstash /pipeline.
+    Возвращает список result для каждой команды или None при сбое.
+    """
+    if not UPSTASH_URL:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                f"{UPSTASH_URL}/pipeline",
+                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"},
+                json=commands,
+            )
+            return r.json()
+    except Exception as e:
+        logger.warning("stats: redis pipeline error: %s", e)
+        return None
+
+
+async def _redis_hincrby_event_day(field: str, by: int = 1) -> None:
+    """
+    Записывает событие в дневной хеш `psycology_events:YYYY-MM-DD`
+    + проставляет TTL. Так появляется разбивка по дням для фильтра периода.
+    Один HTTP-запрос (HINCRBY + EXPIRE через pipeline).
+    """
+    if not UPSTASH_URL:
+        return
+    today_key = REDIS_EVENTS_PREFIX + datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    await _redis_pipeline([
+        ["HINCRBY", today_key, field, str(by)],
+        ["EXPIRE", today_key, str(EVENTS_TTL_SECONDS)],
+    ])
+
+
 # ── Serialization ─────────────────────────────────────────────────────────────
 
 def _to_dict() -> dict:
@@ -227,18 +264,78 @@ async def load_async() -> None:
 
 async def incr_async(field: str, by: int = 1) -> None:
     """
-    Атомарно инкрементит счётчик (в Redis + in-memory).
+    Атомарно инкрементит счётчик (in-memory + Redis: общий хеш + дневной хеш).
     Поддерживает поля: 'pv', 'click:<label>', 'src:<source>'.
     """
-    # In-memory — мгновенно, для текущего процесса
+    # 1. In-memory — мгновенно, для текущего процесса.
     if field == "pv":
         site_pageviews[0] += by
     elif field.startswith("click:"):
         site_clicks[field[6:]] += by
     elif field.startswith("src:"):
         site_sources[field[4:]] += by
-    # Redis — переживает рестарты Railway, агрегирует между процессами
+    # 2. Общий хеш — источник правды для «Всё время», переживает рестарты.
     await _redis_hincrby(field, by)
+    # 3. Дневной хеш — для фильтра «Сегодня / 7 / 30 дней» на дашборде.
+    await _redis_hincrby_event_day(field, by)
+
+
+async def get_site_stats(period: str = "all") -> dict:
+    """
+    Возвращает статистику сайта за указанный период.
+    period: 'all' | 'today' | '7d' | '30d'
+
+    Для 'all' — читаем общие in-memory счётчики (мгновенно).
+    Для остальных — агрегируем дневные хеши Redis за нужное окно.
+    """
+    period_to_days = {"today": 1, "7d": 7, "30d": 30}
+
+    if period == "all" or period not in period_to_days:
+        return {
+            "pageviews": site_pageviews[0],
+            "clicks":    dict(site_clicks.most_common()),
+            "sources":   dict(site_sources.most_common()),
+            "since":     since[0],
+            "period":    "all",
+        }
+
+    days = period_to_days[period]
+    today = datetime.now(timezone.utc).date()
+    date_keys = [
+        REDIS_EVENTS_PREFIX + (today - timedelta(days=i)).isoformat()
+        for i in range(days)
+    ]
+    # Pipeline: одним round-trip забираем все дневные хеши.
+    responses = await _redis_pipeline([["HGETALL", k] for k in date_keys]) or []
+
+    pv = 0
+    clicks: Counter = Counter()
+    sources: Counter = Counter()
+    for r in responses:
+        result = r.get("result") if isinstance(r, dict) else r
+        if not result:
+            continue
+        # Upstash возвращает плоский массив [k1, v1, k2, v2, ...]
+        for i in range(0, len(result), 2):
+            field, value = result[i], result[i + 1]
+            try:
+                v = int(value)
+            except (ValueError, TypeError):
+                continue
+            if field == "pv":
+                pv += v
+            elif field.startswith("click:"):
+                clicks[field[6:]] += v
+            elif field.startswith("src:"):
+                sources[field[4:]] += v
+
+    return {
+        "pageviews": pv,
+        "clicks":    dict(clicks.most_common()),
+        "sources":   dict(sources.most_common()),
+        "since":     since[0],
+        "period":    period,
+    }
 
 
 async def save_async() -> None:

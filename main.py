@@ -328,17 +328,38 @@ def _bot_tab(s: dict) -> str:
 """
 
 
-def _site_tab() -> str:
-    views    = _stats.site_pageviews[0]
-    clicks   = dict(_stats.site_clicks.most_common())
-    sources  = dict(_stats.site_sources.most_common())
-    since    = _stats.since[0]
+def _site_tab(site_stats: dict) -> str:
+    period       = site_stats.get("period", "all")
+    period_label = PERIOD_LABELS.get(period, PERIOD_LABELS["all"])
+    views        = site_stats.get("pageviews", 0)
+    clicks       = site_stats.get("clicks", {})
+    sources      = site_stats.get("sources", {})
+    since        = site_stats.get("since", "—")
     cl_total = max(sum(clicks.values()), 1)
     sr_total = max(sum(sources.values()), 1)
 
+    title = "Посещения сайта" if period == "all" else f"Посещения сайта · {period_label}"
+    if views == 0 and not clicks:
+        return (
+            f'<h2 style="font-size:13px;font-weight:600;letter-spacing:1.5px;'
+            f'text-transform:uppercase;color:#888;margin:0 0 12px">{title}</h2>'
+            f'<p style="color:#888;padding:20px 0">За период «{period_label}» данных нет.</p>'
+            f'<p style="font-size:11px;color:#bbb">* Разбивка по дням ведётся с подключения '
+            f'Upstash Redis — на «Всё время» цифры могут быть больше, т.к. учитывают '
+            f'историю до этого момента.</p>'
+        )
+
+    footer = (
+        f'* Данные с {since} · сохраняются в Redis на каждое событие'
+        if period == "all"
+        else f'* Период «{period_label}» агрегируется из дневных счётчиков '
+             f'(хранятся 90 дней). До подключения Redis события считались только в total — '
+             f'на «Всё время» цифры могут быть больше.'
+    )
+
     return f"""
 <h2 style="font-size:13px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;
-    color:#888;margin:0 0 12px">Посещения сайта</h2>
+    color:#888;margin:0 0 12px">{title}</h2>
 <div style="display:flex;gap:10px;margin-bottom:24px;flex-wrap:wrap">
   {_big(views, "Визитов на сайт", "#4a64f5")}
   {_big(sum(clicks.values()), "Кликов по ссылкам", "#62d6c3")}
@@ -348,7 +369,7 @@ def _site_tab() -> str:
   {_card("🖱 Клики по ссылкам", _rows(clicks, cl_total, "#4a64f5"))}
   {_card("📲 Откуда пришли", _rows(sources, sr_total, "#62d6c3"))}
 </div>
-<p style="font-size:11px;color:#bbb">* Данные с {since} · сохраняются в Redis при каждом событии · агрегаты за всё время (без разбивки по дням)</p>
+<p style="font-size:11px;color:#bbb">{footer}</p>
 """
 
 
@@ -370,11 +391,11 @@ def _render(bot_html: str, site_html: str, updated: str, token: str = "",
         return (f'<a class="{cls}" href="?token={token}&tab={tab}&period={p}">'
                 f'{PERIOD_LABELS[p]}</a>')
 
-    # Фильтр периода применим только к Notion-данным (где есть created_time).
-    # Для вкладки «Сайт» прячем — счётчики там агрегатные, без таймстампов.
-    period_bar_display = "none" if tab == "site" else "flex"
+    # Фильтр периода применяется к обеим вкладкам:
+    # — для бота через `created_time` лидов в Notion;
+    # — для сайта через дневные хеши Redis `psycology_events:YYYY-MM-DD`.
     period_bar = (
-        f'<div class="period-bar" id="periodBar" style="display:{period_bar_display}">' +
+        '<div class="period-bar" id="periodBar">' +
         "".join(_period_btn(p) for p in ("all", "today", "7d", "30d")) +
         '</div>'
     )
@@ -455,9 +476,6 @@ function switchTab(name, btn) {{
     u.searchParams.set('tab', name);
     a.href = u.pathname + u.search;
   }});
-  // На вкладке «Сайт» фильтр периода неактуален (агрегаты без таймстампов).
-  const periodBar = document.getElementById('periodBar');
-  if (periodBar) periodBar.style.display = (name === 'site') ? 'none' : 'flex';
 }}
 </script>
 </body>
@@ -483,4 +501,6 @@ async def dashboard(request: Request, token: str = "", tab: str = "bot", period:
     else:
         updated = notion_stats.get("updated_at", "—")
     active_tab = tab if tab in ("bot", "site") else "bot"
-    return HTMLResponse(_render(_bot_tab(notion_stats), _site_tab(), updated, token, active_tab, active_period))
+    site_stats = await _stats.get_site_stats(active_period)
+    return HTMLResponse(_render(_bot_tab(notion_stats), _site_tab(site_stats),
+                                 updated, token, active_tab, active_period))
