@@ -366,8 +366,30 @@ def _txt(props: dict, key: str) -> str:
     return parts[0]["text"]["content"] if parts else "—"
 
 
-async def get_stats() -> dict:
-    """Выгружает все лиды из Notion и возвращает агрегированную статистику."""
+def _period_cutoff(period: str) -> str | None:
+    """
+    Превращает строку периода в нижнюю границу даты в формате YYYY-MM-DD.
+    Сравнение со строкой `created` (тоже YYYY-MM-DD) корректно лексикографически.
+    None = без фильтра.
+    """
+    from datetime import timedelta
+    today = datetime.now(timezone.utc).date()
+    if period == "today":
+        return today.isoformat()
+    if period == "7d":
+        return (today - timedelta(days=6)).isoformat()
+    if period == "30d":
+        return (today - timedelta(days=29)).isoformat()
+    return None  # "all" или любое другое
+
+
+async def get_stats(period: str = "all") -> dict:
+    """
+    Выгружает лиды из Notion, опционально фильтрует по дате создания,
+    и возвращает агрегированную статистику.
+
+    period: "all" | "today" | "7d" | "30d"
+    """
     rows = []
     cursor = None
     while True:
@@ -398,9 +420,15 @@ async def get_stats() -> dict:
             break
         cursor = data.get("next_cursor")
 
+    # Применяем фильтр периода ДО агрегации, чтобы все плитки и распределения
+    # отражали именно выбранный период.
+    cutoff = _period_cutoff(period)
+    if cutoff:
+        rows = [r for r in rows if r["created"] and r["created"] >= cutoff]
+
     total = len(rows)
     if total == 0:
-        return {"total": 0}
+        return {"total": 0, "period": period}
 
     statuses   = Counter(r["status"]      for r in rows)
     sources    = Counter(r["source"]      for r in rows)
@@ -447,6 +475,7 @@ async def get_stats() -> dict:
         "talk":             dict(talk.most_common()),
         "escape":           dict(escape.most_common()),
         "rubrics":          dict(rubrics.most_common(10)),
+        "period":           period,
         "updated_at":       datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M UTC"),
     }
 

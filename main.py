@@ -249,8 +249,13 @@ def _big(n, label: str, color: str, sub: str = "") -> str:
 
 def _bot_tab(s: dict) -> str:
     total = s.get("total", 0)
+    period = s.get("period", "all")
+    period_label = PERIOD_LABELS.get(period, PERIOD_LABELS["all"])
     if total == 0:
-        return "<p style='color:#888;padding:20px 0'>Данных пока нет.</p>"
+        return (
+            f"<p style='color:#888;padding:20px 0'>За период «{period_label}» "
+            f"данных нет.</p>"
+        )
 
     engaged   = s["engaged"]
     prereg    = s["preregistered"]
@@ -286,9 +291,14 @@ def _bot_tab(s: dict) -> str:
     deeplink_rows = {k: v for k, v in deeplink_rows.items() if v > 0}
     dl_total = sum(deeplink_rows.values()) or 1
 
+    funnel_title = (
+        "Воронка (всего в Notion)" if period == "all"
+        else f"Воронка · {period_label}"
+    )
+
     return f"""
 <h2 style="font-size:13px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;
-    color:#888;margin:0 0 12px">Воронка (всего в Notion)</h2>
+    color:#888;margin:0 0 12px">{funnel_title}</h2>
 <div style="display:flex;gap:10px;margin-bottom:24px;flex-wrap:wrap">
   {_big(total, "Зашли в бот", "#1a1a1a")}
   {_big(engaged, "Взаимодействие", "#4a64f5", _pct(engaged, total))}
@@ -338,13 +348,34 @@ def _site_tab() -> str:
   {_card("🖱 Клики по ссылкам", _rows(clicks, cl_total, "#4a64f5"))}
   {_card("📲 Откуда пришли", _rows(sources, sr_total, "#62d6c3"))}
 </div>
-<p style="font-size:11px;color:#bbb">* Данные с {since} · сохраняются в Redis при каждом событии</p>
+<p style="font-size:11px;color:#bbb">* Данные с {since} · сохраняются в Redis/файл при каждом событии · фильтр периода не применяется (нет таймстампов на событиях)</p>
 """
 
 
-def _render(bot_html: str, site_html: str, updated: str, token: str = "", tab: str = "bot") -> str:
+PERIOD_LABELS = {
+    "all":   "Всё время",
+    "today": "Сегодня",
+    "7d":    "7 дней",
+    "30d":   "30 дней",
+}
+
+
+def _render(bot_html: str, site_html: str, updated: str, token: str = "",
+            tab: str = "bot", period: str = "all") -> str:
     active_bot  = " active" if tab != "site" else ""
     active_site = " active" if tab == "site" else ""
+
+    def _period_btn(p: str) -> str:
+        cls = "period active" if p == period else "period"
+        return (f'<a class="{cls}" href="?token={token}&tab={tab}&period={p}">'
+                f'{PERIOD_LABELS[p]}</a>')
+
+    period_bar = (
+        '<div class="period-bar">' +
+        "".join(_period_btn(p) for p in ("all", "today", "7d", "30d")) +
+        '</div>'
+    )
+
     return f"""<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -367,7 +398,14 @@ def _render(bot_html: str, site_html: str, updated: str, token: str = "", tab: s
     padding:7px 14px; font-size:13px; font-weight:600; cursor:pointer;
     text-decoration:none; display:inline-block; white-space:nowrap; }}
   .refresh-btn:hover {{ background:#444; }}
-  .content {{ max-width:820px; margin:24px auto; padding:0 16px 40px; }}
+  .period-bar {{ max-width:820px; margin:18px auto 0; padding:0 16px;
+    display:flex; gap:6px; flex-wrap:wrap; }}
+  .period {{ background:#fff; color:#555; border:1.5px solid #e8e6e2;
+    border-radius:8px; padding:6px 12px; font-size:12px; font-weight:500;
+    text-decoration:none; cursor:pointer; }}
+  .period:hover {{ border-color:#bbb; color:#1a1a1a; }}
+  .period.active {{ background:#1a1a1a; color:#fff; border-color:#1a1a1a; }}
+  .content {{ max-width:820px; margin:16px auto 0; padding:0 16px 40px; }}
   .tab-pane {{ display:none; }}
   .tab-pane.active {{ display:block; }}
   small {{ font-size:11px; color:#666; }}
@@ -383,27 +421,37 @@ def _render(bot_html: str, site_html: str, updated: str, token: str = "", tab: s
     </div>
     <small>Notion · {updated}</small>
   </div>
-  <a id="refreshBtn" class="refresh-btn" href="?token={token}&tab={tab}">🔄 Обновить</a>
+  <a id="refreshBtn" class="refresh-btn" href="?token={token}&tab={tab}&period={period}">🔄 Обновить</a>
 </div>
+{period_bar}
 <div class="content">
   <div id="pane-bot" class="tab-pane{active_bot}">{bot_html}</div>
   <div id="pane-site" class="tab-pane{active_site}">{site_html}</div>
 </div>
 <script>
 const TOKEN = {json.dumps(token)};
+const PERIOD = {json.dumps(period)};
 function switchTab(name, btn) {{
   document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.getElementById('pane-' + name).classList.add('active');
   btn.classList.add('active');
-  // Запоминаем выбранную вкладку в URL и в кнопке обновления,
-  // чтобы refresh не сбрасывал её на дефолтную «Бот».
+  // Запоминаем выбранную вкладку, период и в URL, и в кнопке «Обновить»,
+  // чтобы refresh ничего не сбрасывал.
   const url = new URL(window.location.href);
   url.searchParams.set('token', TOKEN);
   url.searchParams.set('tab', name);
+  url.searchParams.set('period', PERIOD);
   history.replaceState(null, '', url.toString());
   const btnRefresh = document.getElementById('refreshBtn');
-  if (btnRefresh) btnRefresh.href = '?token=' + encodeURIComponent(TOKEN) + '&tab=' + name;
+  if (btnRefresh) btnRefresh.href = '?token=' + encodeURIComponent(TOKEN)
+                                    + '&tab=' + name + '&period=' + encodeURIComponent(PERIOD);
+  // Кнопки периода тоже должны помнить активную вкладку.
+  document.querySelectorAll('.period').forEach(a => {{
+    const u = new URL(a.href, window.location.origin);
+    u.searchParams.set('tab', name);
+    a.href = u.pathname + u.search;
+  }});
 }}
 </script>
 </body>
@@ -411,21 +459,22 @@ function switchTab(name, btn) {{
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard(request: Request, token: str = "", tab: str = "bot"):
+async def dashboard(request: Request, token: str = "", tab: str = "bot", period: str = "all"):
     if token != DASHBOARD_TOKEN:
         return HTMLResponse("<h2 style='padding:40px;font-family:sans-serif'>403 — доступ запрещён</h2>", status_code=403)
+    active_period = period if period in ("all", "today", "7d", "30d") else "all"
     notion_error: str | None = None
     try:
-        notion_stats = await notion_leads.get_stats()
+        notion_stats = await notion_leads.get_stats(period=active_period)
     except Exception as e:
         logger.error("dashboard notion error: %s", e)
         # Полный текст идёт в логи; в UI показываем короткий хинт + advice.
         notion_error = str(e).split(":", 1)[0][:60]
-        notion_stats = {"total": 0}
+        notion_stats = {"total": 0, "period": active_period}
 
     if notion_error:
         updated = f"⚠️ Notion временно недоступен ({notion_error}) · обновите через минуту"
     else:
         updated = notion_stats.get("updated_at", "—")
     active_tab = tab if tab in ("bot", "site") else "bot"
-    return HTMLResponse(_render(_bot_tab(notion_stats), _site_tab(), updated, token, active_tab))
+    return HTMLResponse(_render(_bot_tab(notion_stats), _site_tab(), updated, token, active_tab, active_period))
