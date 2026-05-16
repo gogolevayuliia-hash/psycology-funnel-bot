@@ -422,7 +422,7 @@ async def _handle_message(message: dict) -> None:
         logger.info("/start user_id=%s @%s param=%r source=%s",
                     user_id, username, param, source)
         # Глубокие ссылки — считаем переходы
-        _DEEPLINK_KEYS = {"deptest", "quiz", "talk", "articles", "guide", "escape"}
+        _DEEPLINK_KEYS = {"deptest", "quiz", "talk", "articles", "guide", "escape", "psy"}
         if param in _DEEPLINK_KEYS:
             _stats.deeplinks[param] += 1
 
@@ -446,6 +446,15 @@ async def _handle_message(message: dict) -> None:
             # чтобы человеку не приходилось искать кнопку.
             await _show_persistent_menu(chat_id)
             await _deliver_guide(chat_id, user_id, username, source, "гайд (deeplink)")
+        elif param == "psy":
+            # Сразу выводим блок «Запись к психологу».
+            _stats.bot["psychologist"] += 1
+            await _show_persistent_menu(chat_id)
+            await send(chat_id, PSYCHOLOGIST_TEXT, reply_markup=_psychologist_kb())
+            asyncio.create_task(notion_leads.audit_upsert(
+                user_id=user_id, username=username,
+                status="Получил гайд", source=source, request="психолог (deeplink)",
+            ))
         else:
             await _welcome(chat_id, user_id, username, source)
         return
