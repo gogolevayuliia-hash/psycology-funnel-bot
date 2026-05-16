@@ -288,6 +288,7 @@ def _bot_tab(s: dict) -> str:
         "📚 Рубрикатор постов":      dl["articles"],
         "📄 Гайд":                   dl["guide"],
         "🩺 Психолог":               dl["psy"],
+        "🔒 Клуб «Кубики Жизни»":    dl["club"],
     }
     deeplink_rows = {k: v for k, v in deeplink_rows.items() if v > 0}
     dl_total = sum(deeplink_rows.values()) or 1

@@ -26,7 +26,8 @@ from escape_quiz import (
     calculate_result as escape_result,
 )
 from texts import (
-    WELCOME, GUIDE_CAPTION, CLUB_INVITE, CLUB_CONFIRMED,
+    WELCOME, GUIDE_CAPTION, CLUB_INVITE, CLUB_DESCRIPTION, CLUB_NAME_PROMPT,
+    CLUB_CONFIRMED,
     PSYCHOLOGIST_TEXT, PSYCHOLOGIST_URL, PROTOCOL_CONFIRMED,
     FALLBACK, SITE_URL, CHANNEL_INVITE_TEXT, VIDEO_LESSON_TEXT,
     LESSON_DELIVERY_CAPTION,
@@ -341,6 +342,13 @@ def _dep_result_kb():
 
 
 
+def _club_info_kb():
+    """Клавиатура к описанию клуба, открытому по deeplink ?start=club."""
+    return {"inline_keyboard": [
+        [{"text": "🔒 Записаться в клуб «Кубики Жизни»", "callback_data": "join_club"}],
+    ]}
+
+
 def _psychologist_kb():
     return {"inline_keyboard": [
         [{"text": "✍️ Написать ассистенту", "url": PSYCHOLOGIST_URL}],
@@ -422,7 +430,7 @@ async def _handle_message(message: dict) -> None:
         logger.info("/start user_id=%s @%s param=%r source=%s",
                     user_id, username, param, source)
         # Глубокие ссылки — считаем переходы
-        _DEEPLINK_KEYS = {"deptest", "quiz", "talk", "articles", "guide", "escape", "psy"}
+        _DEEPLINK_KEYS = {"deptest", "quiz", "talk", "articles", "guide", "escape", "psy", "club"}
         if param in _DEEPLINK_KEYS:
             _stats.deeplinks[param] += 1
 
@@ -454,6 +462,17 @@ async def _handle_message(message: dict) -> None:
             asyncio.create_task(notion_leads.audit_upsert(
                 user_id=user_id, username=username,
                 status="Получил гайд", source=source, request="психолог (deeplink)",
+            ))
+        elif param == "club":
+            # Блок «Клуб Кубики Жизни» — описание + кнопка предзаписи.
+            await _show_persistent_menu(chat_id)
+            await send(chat_id, CLUB_DESCRIPTION, reply_markup=_club_info_kb())
+            # Помечаем, что описание уже видели — чтобы кнопка не дублировала его.
+            user_state[user_id] = {**user_state.get(user_id, {}),
+                                   "source": source, "club_saw_description": True}
+            asyncio.create_task(notion_leads.audit_upsert(
+                user_id=user_id, username=username,
+                status="Получил гайд", source=source, request="клуб (deeplink)",
             ))
         else:
             await _welcome(chat_id, user_id, username, source)
@@ -602,7 +621,12 @@ async def _handle_callback(cb: dict) -> None:
 
     elif data == "join_club":
         _stats.bot["club"] += 1
-        await _ask_name_for_club(chat_id, user_id)
+        # Если описание клуба уже показали (deeplink ?start=club), не повторяем —
+        # сразу просим имя.
+        skip_desc = bool(state.pop("club_saw_description", False))
+        if skip_desc:
+            user_state[user_id] = state
+        await _ask_name_for_club(chat_id, user_id, skip_description=skip_desc)
 
     elif data == "join_protocol":
         _stats.bot["protocol"] += 1
@@ -871,10 +895,11 @@ async def _process_escape_answer(chat_id: int, user_id: int, username: str | Non
 
 # ── Club registration ────────────────────────────────────────────────────────
 
-async def _ask_name_for_club(chat_id: int, user_id: int) -> None:
+async def _ask_name_for_club(chat_id: int, user_id: int, skip_description: bool = False) -> None:
     prev = user_state.get(user_id, {})
     user_state[user_id] = {**prev, "step": "awaiting_name"}
-    await send(chat_id, CLUB_INVITE)
+    # skip_description=True если описание уже показали (например, deeplink ?start=club).
+    await send(chat_id, CLUB_NAME_PROMPT if skip_description else CLUB_INVITE)
 
 
 async def _save_club_registration(chat_id: int, user_id: int,
