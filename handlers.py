@@ -66,9 +66,35 @@ KNOWN_SOURCES = {
 
 
 def _parse_source(param: str | None) -> str:
+    """
+    Достаёт источник трафика из start-параметра.
+    Поддерживает форматы:
+      ?start=tiktok            → TikTok           (чистый источник)
+      ?start=club_tiktok       → TikTok           (entry_source через _)
+      ?start=club_pdf_praktikum → 'pdf praktikum' (произвольный суффикс — кастомная метка)
+      ?start=club              → Прямой           (entry без источника)
+      ?start=                  → Прямой
+    """
     if not param:
         return "Прямой"
-    return KNOWN_SOURCES.get(param.lower(), "Прямой")
+    p = param.lower()
+    if p in KNOWN_SOURCES:
+        return KNOWN_SOURCES[p]
+    if "_" in p:
+        _, suffix = p.split("_", 1)
+        if suffix in KNOWN_SOURCES:
+            return KNOWN_SOURCES[suffix]
+        # Произвольная UTM-метка — пишем как есть, чтобы в Notion появилась
+        # новая опция Источник. Подчёркивания заменяем на пробелы для красоты.
+        return suffix.replace("_", " ").strip() if suffix else "Прямой"
+    return "Прямой"
+
+
+def _parse_entry(param: str | None) -> str | None:
+    """Возвращает ключевую часть до первого '_': 'club_tiktok' → 'club'."""
+    if not param:
+        return None
+    return param.lower().split("_", 1)[0]
 
 
 # ── Telegram API helpers ─────────────────────────────────────────────────────
@@ -424,37 +450,39 @@ async def _handle_message(message: dict) -> None:
     if low == "/start" or low.startswith("/start "):
         param = text[7:].strip() if low.startswith("/start ") else None
         source = _parse_source(param)
+        entry  = _parse_entry(param)
         user_state[user_id] = {**state, "source": source}
         # Строка для аудита: можно сравнить количество /start с числом новых
         # лидов в Notion и поймать тихие потери при рестартах Railway.
-        logger.info("/start user_id=%s @%s param=%r source=%s",
-                    user_id, username, param, source)
-        # Глубокие ссылки — считаем переходы
+        logger.info("/start user_id=%s @%s param=%r entry=%s source=%s",
+                    user_id, username, param, entry, source)
+        # Глубокие ссылки — считаем переходы. Учитываем агрегатно по entry,
+        # чтобы club_tiktok и club_practicum попадали в один counter «club».
         _DEEPLINK_KEYS = {"deptest", "quiz", "talk", "articles", "guide", "escape", "psy", "club"}
-        if param in _DEEPLINK_KEYS:
-            _stats.deeplinks[param] += 1
+        if entry in _DEEPLINK_KEYS:
+            _stats.deeplinks[entry] += 1
 
-        if param == "deptest":
+        if entry == "deptest":
             await _show_persistent_menu(chat_id)
             await _start_dep_quiz(chat_id, user_id)
-        elif param == "quiz":
+        elif entry == "quiz":
             await _show_persistent_menu(chat_id)
             await _start_quiz(chat_id, user_id)
-        elif param == "talk":
+        elif entry == "talk":
             await _show_persistent_menu(chat_id)
             await _start_talk_quiz(chat_id, user_id)
-        elif param == "escape":
+        elif entry == "escape":
             await _show_persistent_menu(chat_id)
             await _start_escape_quiz(chat_id, user_id)
-        elif param == "articles":
+        elif entry == "articles":
             await _show_persistent_menu(chat_id)
             await _show_articles_menu(chat_id)
-        elif param == "guide":
+        elif entry == "guide":
             # Сразу отдаём бесплатный гайд — для ссылок из соцсетей,
             # чтобы человеку не приходилось искать кнопку.
             await _show_persistent_menu(chat_id)
             await _deliver_guide(chat_id, user_id, username, source, "гайд (deeplink)")
-        elif param == "psy":
+        elif entry == "psy":
             # Сразу выводим блок «Запись к психологу».
             _stats.bot["psychologist"] += 1
             await _show_persistent_menu(chat_id)
@@ -463,7 +491,7 @@ async def _handle_message(message: dict) -> None:
                 user_id=user_id, username=username,
                 status="Получил гайд", source=source, request="психолог (deeplink)",
             ))
-        elif param == "club":
+        elif entry == "club":
             # Блок «Клуб Кубики Жизни» — описание + кнопка предзаписи.
             await _show_persistent_menu(chat_id)
             await send(chat_id, CLUB_DESCRIPTION, reply_markup=_club_info_kb())
