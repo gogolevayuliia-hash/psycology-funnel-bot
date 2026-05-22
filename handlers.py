@@ -436,14 +436,21 @@ async def _handle_message(message: dict) -> None:
 
     # ── Admin commands ──
     if str(user_id) == str(ADMIN_CHAT_ID):
-        if low.startswith("/broadcast "):
-            await _do_broadcast(text[len("/broadcast "):].strip())
+        # Важно: более длинные префиксы проверяем раньше, чем '/broadcast '.
+        if low.startswith("/broadcast_practicum "):
+            await _do_broadcast(text[len("/broadcast_practicum "):].strip(), audience="practicum")
             return
         if low.startswith("/broadcast_waitlist "):
-            await _do_broadcast(text[len("/broadcast_waitlist "):].strip(), waitlist_only=True)
+            await _do_broadcast(text[len("/broadcast_waitlist "):].strip(), audience="club")
+            return
+        if low.startswith("/broadcast "):
+            await _do_broadcast(text[len("/broadcast "):].strip(), audience="all")
             return
         if low == "/waitlist":
             await _send_waitlist_report(chat_id)
+            return
+        if low == "/help_admin":
+            await send(chat_id, ADMIN_HELP)
             return
 
     # ── /start [param] ──
@@ -1149,16 +1156,45 @@ async def _send_waitlist_report(chat_id: int) -> None:
 
 # ── Broadcast ────────────────────────────────────────────────────────────────
 
-async def _do_broadcast(text: str, waitlist_only: bool = False) -> None:
-    leads = await notion_leads.get_waitlist() if waitlist_only else await notion_leads.get_all_leads()
-    label = "предзаписи" if waitlist_only else "всей базе"
-    await notify_admin(f"📢 Рассылка по {label}: {len(leads)} чел...")
-    sent = failed = 0
+ADMIN_HELP = (
+    "🛠 <b>Админ-команды</b>\n\n"
+    "<code>/broadcast ТЕКСТ</code> — всем лидам в базе\n"
+    "<code>/broadcast_waitlist ТЕКСТ</code> — только записавшимся в клуб\n"
+    "<code>/broadcast_practicum ТЕКСТ</code> — только записавшимся на практикум\n"
+    "<code>/waitlist</code> — список всех предзаписей (клуб + практикум)\n\n"
+    "💡 Перед отправкой бот напишет, сколько человек получит сообщение."
+)
+
+
+AUDIENCE_LOADERS = {
+    "all":       (lambda: notion_leads.get_all_leads(),         "всей базе"),
+    "club":      (lambda: notion_leads.get_waitlist(),          "предзаписи в клуб"),
+    "practicum": (lambda: notion_leads.get_practicum_waitlist(), "предзаписи на практикум"),
+}
+
+
+async def _do_broadcast(text: str, audience: str = "all") -> None:
+    loader, label = AUDIENCE_LOADERS.get(audience, AUDIENCE_LOADERS["all"])
+    leads = await loader()
+    # Дедуп по user_id на случай если выборка вернула одного и того же
+    # человека несколькими путями (релевантно для get_practicum_waitlist).
+    seen: set[int] = set()
+    uniq: list[dict] = []
     for lead in leads:
+        uid = lead.get("user_id")
+        if uid and uid not in seen:
+            seen.add(uid)
+            uniq.append(lead)
+    await notify_admin(f"📢 Рассылка по {label}: {len(uniq)} чел...")
+    sent = failed = 0
+    for lead in uniq:
         try:
             await send(lead["user_id"], text)
             sent += 1
         except Exception as e:
             logger.warning("Broadcast failed %s: %s", lead["user_id"], e)
             failed += 1
+        # Telegram bot API: безопасный темп ~25 сообщений/сек разным юзерам.
+        # 40ms между отправками — небольшой буфер на случай flood-контроля.
+        await asyncio.sleep(0.04)
     await notify_admin(f"📢 <b>Рассылка завершена</b>\n✅ {sent}\n❌ {failed}")

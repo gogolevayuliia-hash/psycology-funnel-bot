@@ -568,6 +568,72 @@ async def get_registrations() -> list[dict]:
     return leads
 
 
+async def get_practicum_waitlist() -> list[dict]:
+    """
+    Все, кто оставил предзапись на практикум. Дедуп по page_id, поиск
+    по трём источникам (статус / Записи / Запрос) — на случай если статус
+    был перезаписан гонкой фоновых задач.
+    Возвращает список {user_id: int}.
+    """
+    seen_ids: set[str] = set()
+    leads: list[dict] = []
+    url = f"https://api.notion.com/v1/databases/{NOTION_LEADS_DB_ID}/query"
+
+    def _extract(page: dict) -> dict | None:
+        if page["id"] in seen_ids:
+            return None
+        seen_ids.add(page["id"])
+        uid = page["properties"].get("Telegram ID", {}).get("number")
+        if not uid:
+            return None
+        return {"user_id": int(uid)}
+
+    # 1. По статусу «Предзапись практикум»
+    try:
+        data = await _notion_request(
+            "POST", url, timeout=30.0,
+            json_body={"filter": {"property": "Статус",
+                                  "select": {"equals": "Предзапись практикум"}}},
+        )
+        for page in data.get("results", []):
+            row = _extract(page)
+            if row:
+                leads.append(row)
+    except NotionError:
+        pass
+
+    # 2. По полю Запрос (на случай перезаписи статуса)
+    try:
+        data = await _notion_request(
+            "POST", url, timeout=30.0,
+            json_body={"filter": {"property": "Запрос",
+                                  "rich_text": {"contains": "практикум"}}},
+        )
+        for page in data.get("results", []):
+            row = _extract(page)
+            if row:
+                leads.append(row)
+    except NotionError:
+        pass
+
+    # 3. По полю Записи (накопительное — самый надёжный источник для тех,
+    #    кто записался и в клуб, и в практикум)
+    try:
+        data = await _notion_request(
+            "POST", url, timeout=30.0,
+            json_body={"filter": {"property": "Записи",
+                                  "rich_text": {"contains": "практикум"}}},
+        )
+        for page in data.get("results", []):
+            row = _extract(page)
+            if row:
+                leads.append(row)
+    except NotionError:
+        pass
+
+    return leads
+
+
 async def get_waitlist() -> list[dict]:
     try:
         data = await _notion_request(
