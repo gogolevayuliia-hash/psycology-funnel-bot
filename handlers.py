@@ -436,7 +436,19 @@ async def _handle_message(message: dict) -> None:
 
     # ── Admin commands ──
     if str(user_id) == str(ADMIN_CHAT_ID):
-        # Важно: более длинные префиксы проверяем раньше, чем '/broadcast '.
+        # Важно: более длинные префиксы (test-варианты) проверяем раньше.
+        if low.startswith("/broadcast_practicum_test "):
+            await _do_broadcast(text[len("/broadcast_practicum_test "):].strip(),
+                                 audience="practicum", test=True)
+            return
+        if low.startswith("/broadcast_waitlist_test "):
+            await _do_broadcast(text[len("/broadcast_waitlist_test "):].strip(),
+                                 audience="club", test=True)
+            return
+        if low.startswith("/broadcast_test "):
+            await _do_broadcast(text[len("/broadcast_test "):].strip(),
+                                 audience="all", test=True)
+            return
         if low.startswith("/broadcast_practicum "):
             await _do_broadcast(text[len("/broadcast_practicum "):].strip(), audience="practicum")
             return
@@ -1158,11 +1170,18 @@ async def _send_waitlist_report(chat_id: int) -> None:
 
 ADMIN_HELP = (
     "🛠 <b>Админ-команды</b>\n\n"
+    "<b>Боевые рассылки:</b>\n"
     "<code>/broadcast ТЕКСТ</code> — всем лидам в базе\n"
     "<code>/broadcast_waitlist ТЕКСТ</code> — только записавшимся в клуб\n"
-    "<code>/broadcast_practicum ТЕКСТ</code> — только записавшимся на практикум\n"
+    "<code>/broadcast_practicum ТЕКСТ</code> — только записавшимся на практикум\n\n"
+    "<b>🧪 Тест — пришлёт сообщение только вам + покажет размер аудитории:</b>\n"
+    "<code>/broadcast_test ТЕКСТ</code>\n"
+    "<code>/broadcast_waitlist_test ТЕКСТ</code>\n"
+    "<code>/broadcast_practicum_test ТЕКСТ</code>\n\n"
+    "<b>Прочее:</b>\n"
     "<code>/waitlist</code> — список всех предзаписей (клуб + практикум)\n\n"
-    "💡 Перед отправкой бот напишет, сколько человек получит сообщение."
+    "💡 Перед боевой отправкой советую запустить test-вариант — проверите "
+    "форматирование и размер аудитории."
 )
 
 
@@ -1173,7 +1192,7 @@ AUDIENCE_LOADERS = {
 }
 
 
-async def _do_broadcast(text: str, audience: str = "all") -> None:
+async def _do_broadcast(text: str, audience: str = "all", test: bool = False) -> None:
     loader, label = AUDIENCE_LOADERS.get(audience, AUDIENCE_LOADERS["all"])
     leads = await loader()
     # Дедуп по user_id на случай если выборка вернула одного и того же
@@ -1185,6 +1204,24 @@ async def _do_broadcast(text: str, audience: str = "all") -> None:
         if uid and uid not in seen:
             seen.add(uid)
             uniq.append(lead)
+
+    if test:
+        # Тест: посылаем превью только админу + показываем размер аудитории.
+        preview = (
+            f"🧪 <b>ТЕСТ РАССЫЛКИ</b> · аудитория «{label}»: "
+            f"{len(uniq)} чел.\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"{text}\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"Если всё ок — отправьте боевую команду <b>без</b> <code>_test</code>."
+        )
+        try:
+            await send(int(ADMIN_CHAT_ID), preview)
+        except Exception as e:
+            logger.error("broadcast test send failed: %s", e)
+            await notify_admin(f"❌ Тест не удался: {e}")
+        return
+
     await notify_admin(f"📢 Рассылка по {label}: {len(uniq)} чел...")
     sent = failed = 0
     for lead in uniq:
