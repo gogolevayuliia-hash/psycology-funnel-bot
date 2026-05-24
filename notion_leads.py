@@ -537,7 +537,7 @@ async def get_registrations() -> list[dict]:
                 leads.append(row)
 
     # 2. По полю Запрос (ловим тех, у кого статус был перезаписан)
-    for keyword in ("клуб", "практикум"):
+    for keyword in ("клуб", "практикум", "эмоциональный голод"):
         try:
             data = await _notion_request(
                 "POST", url, timeout=30.0,

@@ -11,7 +11,7 @@ import json
 import logging
 import httpx
 
-from config import MARKETING_BOT_TOKEN, ADMIN_CHAT_ID, GUIDE_KEYWORD, TRIPWIRE_URL, CHANNEL_URL
+from config import MARKETING_BOT_TOKEN, ADMIN_CHAT_ID, GUIDE_KEYWORD, TRIPWIRE_URL, ESCAPE_LESSON_URL, CHANNEL_URL
 from quiz import QUESTIONS as QUIZ_Q, RESULTS as QUIZ_R, calculate_result as quiz_result
 from deprivation_quiz import (
     QUESTIONS as DEP_Q, RESULTS as DEP_R, PROTOCOL_DESCRIPTION,
@@ -30,7 +30,7 @@ from texts import (
     CLUB_CONFIRMED,
     PSYCHOLOGIST_TEXT, PSYCHOLOGIST_URL, PROTOCOL_CONFIRMED,
     FALLBACK, SITE_URL, CHANNEL_INVITE_TEXT, VIDEO_LESSON_TEXT,
-    LESSON_DELIVERY_CAPTION,
+    LESSON_DELIVERY_CAPTION, ESCAPE_LESSON_TEXT, HUNGER_LESSON_TEXT,
 )
 from config import LESSON_PDF_PATH
 import notion_leads
@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 BASE = f"https://api.telegram.org/bot{MARKETING_BOT_TOKEN}"
 
 # ── In-memory state ──────────────────────────────────────────────────────────
-# step values: None | "quiz" | "dep_quiz" | "talk_quiz" | "escape_quiz" | "awaiting_name" | "awaiting_protocol_name"
+# step values: None | "quiz" | "dep_quiz" | "talk_quiz" | "escape_quiz" | "awaiting_name" | "awaiting_protocol_name" | "awaiting_hunger_name"
 user_state: dict[int, dict] = {}
 
 # Cached file_ids (avoid re-uploading on every send)
@@ -222,15 +222,33 @@ def _main_menu():
 def _videos_menu_kb():
     """Список всех видеоуроков."""
     return {"inline_keyboard": [
-        [{"text": "🎬 Нам надо поговорить. Только не так.", "callback_data": "show_video_lesson"}],
+        [{"text": "🎬 Нам надо поговорить. Только не так. — 990 ₽", "callback_data": "show_video_lesson"}],
+        [{"text": "🧠 Точка побега — 990 ₽", "callback_data": "show_escape_lesson"}],
+        [{"text": "💔 Эмоциональный голод — в разработке", "callback_data": "show_hunger_lesson"}],
         [{"text": "← Главное меню", "callback_data": "back_to_menu"}],
     ]}
 
 
 def _video_lesson_kb():
-    """Кнопка покупки — показывается после текста-продажи видео."""
+    """Кнопка покупки урока «Нам надо поговорить»."""
     return {"inline_keyboard": [
         [{"text": "🎬 Купить урок — 990 ₽", "url": TRIPWIRE_URL}],
+        [{"text": "← Все видео", "callback_data": "show_videos"}],
+    ]}
+
+
+def _escape_lesson_kb():
+    """Кнопка покупки практикума «Точка побега»."""
+    return {"inline_keyboard": [
+        [{"text": "🧠 Купить практикум — 990 ₽", "url": ESCAPE_LESSON_URL}],
+        [{"text": "← Все видео", "callback_data": "show_videos"}],
+    ]}
+
+
+def _hunger_lesson_kb():
+    """Предзапись на «Эмоциональный голод» (в разработке)."""
+    return {"inline_keyboard": [
+        [{"text": "🔔 Записаться в лист ожидания", "callback_data": "join_hunger_waitlist"}],
         [{"text": "← Все видео", "callback_data": "show_videos"}],
     ]}
 
@@ -316,11 +334,11 @@ def _escape_result_kb(route: str):
     if route == "hunger":
         return {"inline_keyboard": [
             [{"text": "💔 Пройти тест «Эмоциональный голод»", "callback_data": "start_dep_quiz"}],
-            [{"text": "📋 Записаться на практикум", "callback_data": "join_protocol"}],
+            [{"text": "🧠 Практикум «Точка побега» — 990 ₽", "callback_data": "show_escape_lesson"}],
         ]}
     # protocol
     return {"inline_keyboard": [
-        [{"text": "📋 Записаться на практикум", "callback_data": "join_protocol"}],
+        [{"text": "🧠 Практикум «Точка побега» — 990 ₽", "callback_data": "show_escape_lesson"}],
         [{"text": "🔒 Предзапись в клуб", "callback_data": "join_club"}],
     ]}
 
@@ -335,7 +353,7 @@ def _talk_result_kb():
 def _anxious_result_kb():
     return {"inline_keyboard": [
         [{"text": "💔 Пройти тест «Эмоциональный голод»", "callback_data": "start_dep_quiz"}],
-        [{"text": "📋 Хочу узнать про «Практикум»", "callback_data": "join_protocol"}],
+        [{"text": "🧠 Практикум «Точка побега» — 990 ₽", "callback_data": "show_escape_lesson"}],
         [{"text": "🔒 Предзапись в клуб", "callback_data": "join_club"}],
     ]}
 
@@ -362,7 +380,7 @@ def _secure_result_kb():
 
 def _dep_result_kb():
     return {"inline_keyboard": [
-        [{"text": "🔔 Записаться на практикум", "callback_data": "join_protocol"}],
+        [{"text": "🧠 Практикум «Точка побега» — 990 ₽", "callback_data": "show_escape_lesson"}],
         [{"text": "🔒 Записаться в клуб", "callback_data": "join_club"}],
     ]}
 
@@ -556,6 +574,9 @@ async def _handle_message(message: dict) -> None:
     if step == "awaiting_protocol_name":
         await _save_protocol_registration(chat_id, user_id, username, text)
         return
+    if step == "awaiting_hunger_name":
+        await _save_hunger_registration(chat_id, user_id, username, text)
+        return
 
     # ── Fallback ──
     await send(chat_id, FALLBACK, reply_markup=_fallback_kb())
@@ -665,6 +686,17 @@ async def _handle_callback(cb: dict) -> None:
         _stats.bot["video_lesson"] += 1
         await _send_preview_video(chat_id)
         await send(chat_id, VIDEO_LESSON_TEXT, reply_markup=_video_lesson_kb())
+
+    elif data == "show_escape_lesson":
+        _stats.bot["escape_lesson"] += 1
+        await send(chat_id, ESCAPE_LESSON_TEXT, reply_markup=_escape_lesson_kb())
+
+    elif data == "show_hunger_lesson":
+        await send(chat_id, HUNGER_LESSON_TEXT, reply_markup=_hunger_lesson_kb())
+
+    elif data == "join_hunger_waitlist":
+        _stats.bot["hunger_waitlist"] += 1
+        await _ask_name_for_hunger_waitlist(chat_id, user_id)
 
     elif data == "join_club":
         _stats.bot["club"] += 1
@@ -1120,6 +1152,50 @@ async def _send_lesson_pdf(chat_id: int) -> bool:
 
 # ── Waitlist report ──────────────────────────────────────────────────────────
 
+async def _ask_name_for_hunger_waitlist(chat_id: int, user_id: int) -> None:
+    prev = user_state.get(user_id, {})
+    user_state[user_id] = {**prev, "step": "awaiting_hunger_name"}
+    await send(chat_id, "Как вас зовут? Запишу в лист ожидания — напишу первой, когда практикум выйдет.")
+
+
+async def _save_hunger_registration(chat_id: int, user_id: int,
+                                     username: str | None, name: str) -> None:
+    prev = user_state.get(user_id, {})
+    source = prev.get("source", "Прямой")
+    attachment_type = prev.get("attachment_type")
+    dep_level = prev.get("dep_level")
+    user_state[user_id] = {**prev, "step": None}
+
+    page_id = await notion_leads.upsert_lead(
+        user_id=user_id, username=username, name=name,
+        attachment_type=attachment_type, status="Предзапись",
+        source=source, request="эмоциональный голод", deprivation_level=dep_level,
+    )
+    notion_flag = "✅" if page_id else "❌"
+
+    try:
+        await send(
+            chat_id,
+            f"✅ <b>{name}, записала вас!</b>\n\n"
+            "Напишу, как только практикум «Эмоциональный голод» выйдет. "
+            "А пока — загляните в канал, там много полезного 👇",
+            reply_markup={"inline_keyboard": [
+                [{"text": "📣 Перейти в канал", "url": CHANNEL_URL}],
+            ]},
+        )
+    except Exception as e:
+        logger.error("hunger confirm send failed: %s", e)
+    await notify_admin(
+        f"💔 <b>Предзапись: Эмоциональный голод!</b>\n\n"
+        f"👤 {name} (@{username or '—'})\n"
+        f"🆔 {user_id}\n"
+        f"🧠 Тип: {attachment_type or '—'}\n"
+        f"📊 Депривация: {dep_level or '—'}\n"
+        f"📲 Источник: {source}\n"
+        f"📝 Notion: {notion_flag}"
+    )
+
+
 async def _send_waitlist_report(chat_id: int) -> None:
     """Отправляет все предзаписи из Notion администратору."""
     await send(chat_id, "⏳ Загружаю список из Notion...")
@@ -1133,10 +1209,11 @@ async def _send_waitlist_report(chat_id: int) -> None:
         await send(chat_id, "📋 Предзаписей в Notion пока нет.")
         return
 
-    club     = [l for l in leads if "клуб" in l["status"] or "Предзапись" == l["status"]]
-    protocol = [l for l in leads if "практикум" in l["status"] or "Предзапись практикум" == l["status"]]
-    # Остальные — те у кого статус был перезаписан, но Запрос содержит ключевое слово
-    others   = [l for l in leads if l not in club and l not in protocol]
+    club     = [l for l in leads if "клуб" in (l["status"] + l["zapros"])]
+    hunger   = [l for l in leads if "эмоциональный голод" in l["zapros"] and l not in club]
+    protocol = [l for l in leads if ("практикум" in l["status"] or "практикум" in l["zapros"])
+                and l not in club and l not in hunger]
+    others   = [l for l in leads if l not in club and l not in hunger and l not in protocol]
 
     lines = [f"📋 <b>Все предзаписи из Notion</b> — {len(leads)} чел.\n"]
 
@@ -1148,14 +1225,20 @@ async def _send_waitlist_report(chat_id: int) -> None:
             lines.append(f"• {l['name']} | {tg} | {l['attachment']} | {l['source']} | {l['created']}{flag}")
 
     if protocol:
-        lines.append(f"\n<b>📊 Практикум — {len(protocol)} чел.</b>")
+        lines.append(f"\n<b>🧠 Практикум «Точка побега» — {len(protocol)} чел.</b>")
         for l in protocol:
             tg = l["username"] if l["username"] != "—" else f"id{l['user_id']}"
             flag = " ⚠️" if "перезаписан" in l["status"] else ""
             lines.append(f"• {l['name']} | {tg} | {l['attachment']} | {l['source']} | {l['created']}{flag}")
 
+    if hunger:
+        lines.append(f"\n<b>💔 Лист ожидания «Эмоциональный голод» — {len(hunger)} чел.</b>")
+        for l in hunger:
+            tg = l["username"] if l["username"] != "—" else f"id{l['user_id']}"
+            lines.append(f"• {l['name']} | {tg} | {l['attachment']} | {l['source']} | {l['created']}")
+
     if others:
-        lines.append(f"\n<b>⚠️ Статус перезаписан, но запрос указывает на регистрацию — {len(others)} чел.</b>")
+        lines.append(f"\n<b>⚠️ Статус перезаписан — {len(others)} чел.</b>")
         for l in others:
             tg = l["username"] if l["username"] != "—" else f"id{l['user_id']}"
             lines.append(f"• {l['name']} | {tg} | запрос: {l['zapros']} | {l['created']}")
