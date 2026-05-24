@@ -11,7 +11,7 @@ import json
 import logging
 import httpx
 
-from config import MARKETING_BOT_TOKEN, ADMIN_CHAT_ID, GUIDE_KEYWORD, TRIPWIRE_URL, ESCAPE_LESSON_URL, CHANNEL_URL
+from config import MARKETING_BOT_TOKEN, ADMIN_CHAT_ID, GUIDE_KEYWORD, TRIPWIRE_URL, ESCAPE_LESSON_URL, HUNGER_LESSON_URL, CHANNEL_URL
 from quiz import QUESTIONS as QUIZ_Q, RESULTS as QUIZ_R, calculate_result as quiz_result
 from deprivation_quiz import (
     QUESTIONS as DEP_Q, RESULTS as DEP_R, PROTOCOL_DESCRIPTION,
@@ -224,7 +224,7 @@ def _videos_menu_kb():
     return {"inline_keyboard": [
         [{"text": "🎬 Нам надо поговорить. Только не так. — 990 ₽", "callback_data": "show_video_lesson"}],
         [{"text": "🧠 Точка побега — 990 ₽", "callback_data": "show_escape_lesson"}],
-        [{"text": "💔 Эмоциональный голод — в разработке", "callback_data": "show_hunger_lesson"}],
+        [{"text": "💔 Эмоциональный голод — скидка 40% до выхода", "callback_data": "show_hunger_lesson"}],
         [{"text": "← Главное меню", "callback_data": "back_to_menu"}],
     ]}
 
@@ -246,9 +246,9 @@ def _escape_lesson_kb():
 
 
 def _hunger_lesson_kb():
-    """Предзапись на «Эмоциональный голод» (в разработке)."""
+    """Кнопка покупки «Эмоциональный голод» со скидкой до выхода."""
     return {"inline_keyboard": [
-        [{"text": "🔔 Записаться в лист ожидания", "callback_data": "join_hunger_waitlist"}],
+        [{"text": "💔 Купить со скидкой 40% — сейчас", "url": HUNGER_LESSON_URL}],
         [{"text": "← Все видео", "callback_data": "show_videos"}],
     ]}
 
@@ -380,7 +380,7 @@ def _secure_result_kb():
 
 def _dep_result_kb():
     return {"inline_keyboard": [
-        [{"text": "🧠 Практикум «Точка побега» — 990 ₽", "callback_data": "show_escape_lesson"}],
+        [{"text": "💔 Практикум «Эмоциональный голод» — скидка 40%", "callback_data": "show_hunger_lesson"}],
         [{"text": "🔒 Записаться в клуб", "callback_data": "join_club"}],
     ]}
 

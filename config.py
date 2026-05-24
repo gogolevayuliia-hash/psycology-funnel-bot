@@ -15,6 +15,9 @@ TRIPWIRE_URL = os.environ.get("TRIPWIRE_URL", "https://web.tribute.tg/p/vnW")
 # Ссылка на практикум «Точка побега» на Tribute
 ESCAPE_LESSON_URL = os.environ.get("ESCAPE_LESSON_URL", "https://t.me/tribute/app?startapp=sVVg")
 
+# Ссылка на практикум «Эмоциональный голод» (со скидкой до выхода)
+HUNGER_LESSON_URL = os.environ.get("HUNGER_LESSON_URL", "https://t.me/tribute/app?startapp=sVVl_pc_U0ZQUFOY")
+
 # Ссылка на открытый канал
 CHANNEL_URL = "https://t.me/gogolevajuls"
 
