@@ -689,6 +689,7 @@ async def _handle_callback(cb: dict) -> None:
 
     elif data == "show_escape_lesson":
         _stats.bot["escape_lesson"] += 1
+        await send_photo(chat_id, "images/schema_escape.png")
         await send(chat_id, ESCAPE_LESSON_TEXT, reply_markup=_escape_lesson_kb())
 
     elif data == "show_hunger_lesson":
