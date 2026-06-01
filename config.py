@@ -28,4 +28,5 @@ DASHBOARD_TOKEN = os.environ.get("DASHBOARD_TOKEN", "change_me_in_railway")
 TRIBUTE_API_KEY = os.environ.get("TRIBUTE_API_KEY", "")
 
 # Путь к PDF шпаргалке видеоурока (отправляется покупателям)
-LESSON_PDF_PATH = "lesson.pdf"
+# Абсолютный путь — работает независимо от рабочей директории Railway
+LESSON_PDF_PATH = os.path.join(os.path.dirname(__file__), "lesson.pdf")

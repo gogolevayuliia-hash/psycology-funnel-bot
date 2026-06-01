@@ -9,7 +9,11 @@ Flows: /start → menu → guide / quiz / club / lesson
 import asyncio
 import json
 import logging
+import os
 import httpx
+
+# Абсолютный путь к директории бота — работает на Railway независимо от CWD
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 from config import MARKETING_BOT_TOKEN, ADMIN_CHAT_ID, GUIDE_KEYWORD, TRIPWIRE_URL, ESCAPE_LESSON_URL, HUNGER_LESSON_URL, CHANNEL_URL
 from quiz import QUESTIONS as QUIZ_Q, RESULTS as QUIZ_R, calculate_result as quiz_result
@@ -56,7 +60,7 @@ user_state: dict[int, dict] = {}
 _guide_file_id: str | None = None
 _photo_cache: dict[str, str] = {}  # path → file_id
 
-GUIDE_PDF_PATH = "guide.pdf"
+GUIDE_PDF_PATH = os.path.join(BASE_DIR, "guide.pdf")
 
 KNOWN_SOURCES = {
     "tiktok": "TikTok", "instagram": "Instagram",
@@ -142,7 +146,8 @@ async def send_photo(chat_id: int, image_path: str, caption: str = "",
                 upload_payload["reply_markup"] = json.dumps(
                     upload_payload["reply_markup"], ensure_ascii=False
                 )
-            with open(image_path, "rb") as f:
+            abs_path = os.path.join(BASE_DIR, image_path)
+            with open(abs_path, "rb") as f:
                 ext = image_path.rsplit(".", 1)[-1].lower()
                 r = await _api("sendPhoto", data=upload_payload,
                                 files={"photo": (f"img.{ext}", f)})
@@ -1131,7 +1136,6 @@ async def _send_preview_video(chat_id: int) -> bool:
 async def _send_lesson_pdf(chat_id: int) -> bool:
     """Отправляет PDF шпаргалку. Возвращает True если успешно."""
     global _lesson_file_id
-    import os
     caption = LESSON_DELIVERY_CAPTION
     payload = {"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"}
     try:
