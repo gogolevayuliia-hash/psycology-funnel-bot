@@ -223,7 +223,7 @@ def _videos_menu_kb():
     """Список всех видеоуроков."""
     return {"inline_keyboard": [
         [{"text": "🎬 Нам надо поговорить. Только не так. — 990 ₽", "callback_data": "show_video_lesson"}],
-        [{"text": "🧠 Точка побега — 594 ₽ до 30.05 🔥", "callback_data": "show_escape_lesson"}],
+        [{"text": "🧠 Точка побега — 742 ₽ (скидка 25% для бота) 🎁", "callback_data": "show_escape_lesson"}],
         [{"text": "💔 Эмоциональный голод — скидка 40% до выхода", "callback_data": "show_hunger_lesson"}],
         [{"text": "← Главное меню", "callback_data": "back_to_menu"}],
     ]}
@@ -240,7 +240,7 @@ def _video_lesson_kb():
 def _escape_lesson_kb():
     """Кнопка покупки практикума «Точка побега»."""
     return {"inline_keyboard": [
-        [{"text": "🧠 Купить со скидкой 40% — 594 ₽ до 30.05", "url": ESCAPE_LESSON_URL}],
+        [{"text": "🧠 Купить со скидкой 25% — 742 ₽", "url": ESCAPE_LESSON_URL}],
         [{"text": "← Все видео", "callback_data": "show_videos"}],
     ]}
 
@@ -334,11 +334,11 @@ def _escape_result_kb(route: str):
     if route == "hunger":
         return {"inline_keyboard": [
             [{"text": "💔 Пройти тест «Эмоциональный голод»", "callback_data": "start_dep_quiz"}],
-            [{"text": "🧠 Практикум «Точка побега» — 594 ₽ до 30.05 🔥", "callback_data": "show_escape_lesson"}],
+            [{"text": "🧠 Практикум «Точка побега» — 742 ₽ (скидка для бота) 🎁", "callback_data": "show_escape_lesson"}],
         ]}
     # protocol
     return {"inline_keyboard": [
-        [{"text": "🧠 Практикум «Точка побега» — 594 ₽ до 30.05 🔥", "callback_data": "show_escape_lesson"}],
+        [{"text": "🧠 Практикум «Точка побега» — 742 ₽ (скидка для бота) 🎁", "callback_data": "show_escape_lesson"}],
         [{"text": "🔒 Предзапись в клуб", "callback_data": "join_club"}],
     ]}
 
@@ -353,7 +353,7 @@ def _talk_result_kb():
 def _anxious_result_kb():
     return {"inline_keyboard": [
         [{"text": "💔 Пройти тест «Эмоциональный голод»", "callback_data": "start_dep_quiz"}],
-        [{"text": "🧠 Практикум «Точка побега» — 594 ₽ до 30.05 🔥", "callback_data": "show_escape_lesson"}],
+        [{"text": "🧠 Практикум «Точка побега» — 742 ₽ (скидка для бота) 🎁", "callback_data": "show_escape_lesson"}],
         [{"text": "🔒 Предзапись в клуб", "callback_data": "join_club"}],
     ]}
 
