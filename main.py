@@ -382,28 +382,65 @@ def _site_tab(site_stats: dict) -> str:
 # ── Tribute sales ─────────────────────────────────────────────────────────────
 
 async def _fetch_tribute_sales() -> dict:
-    """Запрашивает список оплаченных заказов через Tribute API."""
+    """Запрашивает список заказов через Tribute API.
+    Правильные эндпоинты: /digital/orders и /physical/orders (не /shop/orders).
+    Auth: заголовок Api-Key. Генерируется в Tribute → Настройки → ⋯ → API Keys.
+    """
     if not TRIBUTE_API_KEY:
-        return {"error": "TRIBUTE_API_KEY не задан", "items": []}
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.get(
-                "https://tribute.tg/api/v1/shop/orders",
-                headers={"Api-Key": TRIBUTE_API_KEY},
-                params={"status": "paid", "size": 200},
-            )
-            if r.status_code == 401:
-                return {"error": "401 — неверный API ключ", "items": []}
-            if r.status_code != 200:
-                return {"error": f"HTTP {r.status_code}", "items": []}
-            data = r.json()
-            # Tribute возвращает либо список, либо {"items": [...], "total": N}
-            if isinstance(data, list):
-                return {"items": data, "total": len(data)}
-            return data
-    except Exception as e:
-        logger.error("tribute sales fetch error: %s", e)
-        return {"error": str(e), "items": []}
+        return {
+            "error": (
+                "TRIBUTE_API_KEY не задан. "
+                "Сгенерируйте в Tribute: Настройки → ⋯ → API Keys → Generate"
+            ),
+            "items": [],
+        }
+    headers = {"Api-Key": TRIBUTE_API_KEY}
+    base = "https://tribute.tg/api/v1"
+    all_items: list = []
+    last_error: str | None = None
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        for endpoint in ("/digital/orders", "/physical/orders"):
+            try:
+                r = await client.get(
+                    f"{base}{endpoint}",
+                    headers=headers,
+                    params={"size": 200},
+                )
+                logger.info("tribute %s → %s", endpoint, r.status_code)
+                if r.status_code == 401:
+                    return {
+                        "error": (
+                            "401 — неверный ключ. "
+                            "Сгенерируйте в Tribute: Настройки → ⋯ → API Keys → Generate"
+                        ),
+                        "items": [],
+                    }
+                if r.status_code == 404:
+                    continue  # этот тип не поддерживается — пробуем следующий
+                if r.status_code != 200:
+                    last_error = f"HTTP {r.status_code} ({endpoint})"
+                    continue
+                data = r.json()
+                # Tribute может вернуть список или объект с items/orders/data
+                if isinstance(data, list):
+                    items = data
+                else:
+                    items = (
+                        data.get("items")
+                        or data.get("orders")
+                        or data.get("data")
+                        or []
+                    )
+                if isinstance(items, list):
+                    all_items.extend(items)
+            except Exception as e:
+                logger.error("tribute sales fetch error (%s): %s", endpoint, e)
+                last_error = str(e)[:120]
+
+    if not all_items and last_error:
+        return {"error": last_error, "items": []}
+    return {"items": all_items, "total": len(all_items)}
 
 
 # ── Products tab ───────────────────────────────────────────────────────────────
