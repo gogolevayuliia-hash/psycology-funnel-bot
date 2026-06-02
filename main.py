@@ -11,7 +11,11 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, HTMLResponse
 
-from config import MARKETING_BOT_TOKEN, DASHBOARD_TOKEN, TRIBUTE_API_KEY
+from config import (
+    MARKETING_BOT_TOKEN, DASHBOARD_TOKEN, TRIBUTE_API_KEY,
+    TRIPWIRE_URL, ESCAPE_LESSON_URL, HUNGER_LESSON_URL,
+    LESSON_PDF_PATH,
+)
 import handlers
 import notion_leads
 import stats as _stats
@@ -375,6 +379,310 @@ def _site_tab(site_stats: dict) -> str:
 """
 
 
+# ── Tribute sales ─────────────────────────────────────────────────────────────
+
+async def _fetch_tribute_sales() -> dict:
+    """Запрашивает список оплаченных заказов через Tribute API."""
+    if not TRIBUTE_API_KEY:
+        return {"error": "TRIBUTE_API_KEY не задан", "items": []}
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(
+                "https://tribute.tg/api/v1/shop/orders",
+                headers={"Api-Key": TRIBUTE_API_KEY},
+                params={"status": "paid", "size": 200},
+            )
+            if r.status_code == 401:
+                return {"error": "401 — неверный API ключ", "items": []}
+            if r.status_code != 200:
+                return {"error": f"HTTP {r.status_code}", "items": []}
+            data = r.json()
+            # Tribute возвращает либо список, либо {"items": [...], "total": N}
+            if isinstance(data, list):
+                return {"items": data, "total": len(data)}
+            return data
+    except Exception as e:
+        logger.error("tribute sales fetch error: %s", e)
+        return {"error": str(e), "items": []}
+
+
+# ── Products tab ───────────────────────────────────────────────────────────────
+
+_BOT_NAME = "gogolevajuls_bot"
+
+_PRODUCTS = [
+    {
+        "emoji": "📄",
+        "name": "Гайд «Как перестать срываться на близких»",
+        "type": "Lead magnet",
+        "price": "Бесплатно",
+        "link": None,
+        "file": LESSON_PDF_PATH.replace("lesson.pdf", "guide.pdf"),
+        "file_label": "guide.pdf",
+        "keyword": "гайд",
+        "status": "✅ Активен",
+        "color": "#62d6c3",
+        "deeplink": "guide",
+    },
+    {
+        "emoji": "🎬",
+        "name": "Видеоурок «Нам надо поговорить. Только не так.»",
+        "type": "Tripwire",
+        "price": "990 ₽",
+        "link": TRIPWIRE_URL,
+        "file": LESSON_PDF_PATH,
+        "file_label": "lesson.pdf (шпаргалка)",
+        "keyword": "урок",
+        "status": "✅ Активен",
+        "color": "#4a64f5",
+        "deeplink": None,
+    },
+    {
+        "emoji": "🧠",
+        "name": "Практикум «Точка побега»",
+        "type": "Практикум",
+        "price": "742 ₽ (скидка 25%)",
+        "link": ESCAPE_LESSON_URL,
+        "file": None,
+        "file_label": None,
+        "keyword": None,
+        "status": "✅ Активен",
+        "color": "#f4956b",
+        "deeplink": "escape",
+    },
+    {
+        "emoji": "💔",
+        "name": "Практикум «Эмоциональный голод»",
+        "type": "Практикум",
+        "price": "Скидка 40% до выхода",
+        "link": HUNGER_LESSON_URL,
+        "file": None,
+        "file_label": None,
+        "keyword": None,
+        "status": "🔜 Продаётся до выхода",
+        "color": "#ee7258",
+        "deeplink": "deptest",
+    },
+    {
+        "emoji": "🔒",
+        "name": "Клуб «Кубики Жизни»",
+        "type": "Подписка",
+        "price": "740 ₽/мес (предзапись)",
+        "link": None,
+        "file": None,
+        "file_label": None,
+        "keyword": "клуб",
+        "status": "🔜 Предзапись",
+        "color": "#9b6cf5",
+        "deeplink": "club",
+    },
+]
+
+_BOT_KEYWORDS = [
+    ("гайд",    "Бесплатный гайд «Как перестать срываться»"),
+    ("тест",    "Тест на тип привязанности"),
+    ("клуб",    "Предзапись в клуб «Кубики Жизни»"),
+    ("урок",    "Видеоурок «Нам надо поговорить»"),
+    ("психолог","Записаться к психологу"),
+]
+
+_BOT_DEEPLINKS = [
+    ("quiz",     "🧠 Тест привязанности"),
+    ("escape",   "🚪 Тест «Точка побега»"),
+    ("deptest",  "💔 Тест «Эмоциональный голод»"),
+    ("talk",     "💬 Тест на разговор"),
+    ("articles", "📚 Рубрикатор постов"),
+    ("guide",    "📄 Гайд"),
+    ("psy",      "🩺 Психолог"),
+    ("club",     "🔒 Клуб «Кубики Жизни»"),
+]
+
+
+def _file_updated(path: str | None) -> str:
+    if not path:
+        return "—"
+    try:
+        ts = os.path.getmtime(path)
+        return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%d.%m.%Y")
+    except Exception:
+        return "—"
+
+
+def _products_tab(sales_data: dict) -> str:
+    deferred = sales_data.get("_deferred")
+    # ── Tribute sales analysis ─────────────────────────────────────────────
+    sales_error = sales_data.get("error")
+    items = sales_data.get("items", []) or []
+    # Попробуем разные ключи: items / orders / data
+    if not items:
+        items = sales_data.get("orders", []) or sales_data.get("data", []) or []
+
+    total_sales = len(items)
+    total_revenue = 0
+    product_counts: dict[str, int] = {}
+    product_revenue: dict[str, int] = {}
+
+    for order in items:
+        amount = (
+            order.get("amount") or order.get("price") or
+            order.get("sum") or 0
+        )
+        try:
+            amount = int(float(str(amount)))
+        except Exception:
+            amount = 0
+        total_revenue += amount
+
+        # Название продукта
+        pname = (
+            order.get("product_title") or order.get("product_name") or
+            order.get("title") or order.get("name") or "—"
+        )
+        product_counts[pname] = product_counts.get(pname, 0) + 1
+        product_revenue[pname] = product_revenue.get(pname, 0) + amount
+
+    # ── Products catalog ───────────────────────────────────────────────────
+    catalog_html = ""
+    for p in _PRODUCTS:
+        link_html = (
+            f'<a href="{p["link"]}" target="_blank" style="color:{p["color"]};'
+            f'font-size:12px;font-weight:600;text-decoration:none">'
+            f'🛒 Открыть на Tribute</a>'
+            if p["link"] else
+            '<span style="font-size:12px;color:#bbb">нет ссылки (через бота)</span>'
+        )
+        deeplink_html = (
+            f'<a href="https://t.me/{_BOT_NAME}?start={p["deeplink"]}" target="_blank" '
+            f'style="color:#888;font-size:11px;text-decoration:none">'
+            f't.me/{_BOT_NAME}?start={p["deeplink"]}</a>'
+            if p["deeplink"] else ""
+        )
+        keyword_html = (
+            f'<span style="background:#f5f5f3;border-radius:4px;padding:2px 7px;'
+            f'font-size:11px;font-family:monospace;color:#555">{p["keyword"]}</span>'
+            if p["keyword"] else ""
+        )
+        file_html = ""
+        if p["file_label"]:
+            updated_date = _file_updated(p["file"])
+            file_html = (
+                f'<span style="font-size:11px;color:#888">📁 {p["file_label"]} '
+                f'<span style="color:#bbb">· обновлён {updated_date}</span></span>'
+            )
+
+        catalog_html += f"""
+<div style="background:#fff;border-radius:14px;padding:16px;border:1.5px solid #eee;
+    border-left:4px solid {p['color']};margin-bottom:10px">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+    <div style="flex:1">
+      <div style="font-size:14px;font-weight:700;margin-bottom:4px">{p['emoji']} {p['name']}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+        <span style="background:{p['color']}22;color:{p['color']};border-radius:5px;
+            padding:2px 8px;font-size:11px;font-weight:600">{p['type']}</span>
+        <span style="font-size:13px;font-weight:600;color:#1a1a1a">{p['price']}</span>
+        <span style="font-size:11px;color:#888">{p['status']}</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        {link_html}
+        {f'<div>{deeplink_html}</div>' if deeplink_html else ''}
+        {f'<div>{keyword_html}</div>' if keyword_html else ''}
+        {f'<div>{file_html}</div>' if file_html else ''}
+      </div>
+    </div>
+  </div>
+</div>"""
+
+    # ── Bot deeplinks ──────────────────────────────────────────────────────
+    deeplinks_html = ""
+    for slug, label in _BOT_DEEPLINKS:
+        url = f"https://t.me/{_BOT_NAME}?start={slug}"
+        deeplinks_html += (
+            f'<div style="display:flex;justify-content:space-between;align-items:center;'
+            f'padding:8px 0;border-bottom:1px solid #f5f5f3">'
+            f'<span style="font-size:13px">{label}</span>'
+            f'<a href="{url}" target="_blank" style="font-size:11px;color:#4a64f5;'
+            f'font-family:monospace;text-decoration:none">?start={slug}</a>'
+            f'</div>'
+        )
+
+    # ── Bot keywords ───────────────────────────────────────────────────────
+    keywords_html = ""
+    for kw, desc in _BOT_KEYWORDS:
+        keywords_html += (
+            f'<div style="display:flex;justify-content:space-between;align-items:center;'
+            f'padding:8px 0;border-bottom:1px solid #f5f5f3">'
+            f'<span style="background:#f5f5f3;border-radius:5px;padding:3px 10px;'
+            f'font-size:12px;font-family:monospace;color:#1a1a1a;font-weight:600">{kw}</span>'
+            f'<span style="font-size:12px;color:#666">{desc}</span>'
+            f'</div>'
+        )
+
+    # ── Sales section ──────────────────────────────────────────────────────
+    if deferred:
+        sales_html = (
+            '<p style="color:#888;font-size:13px">Нажмите 🔄 Обновить — '
+            'данные загрузятся при открытии вкладки «Продукты».</p>'
+        )
+    elif sales_error:
+        sales_html = (
+            f'<p style="color:#ee7258;font-size:13px">⚠️ Ошибка загрузки: {sales_error}</p>'
+            f'<p style="font-size:11px;color:#bbb;margin-top:6px">'
+            f'Убедитесь, что переменная TRIBUTE_API_KEY задана в Railway Variables.</p>'
+        )
+    elif total_sales == 0:
+        sales_html = '<p style="color:#aaa;font-size:13px">Продаж пока нет.</p>'
+    else:
+        sales_html = f"""
+<div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+  {_big(total_sales, "Продаж всего", "#4a64f5")}
+  {_big(f"{total_revenue:,}".replace(",", " ") + " ₽", "Выручка", "#62d6c3")}
+</div>"""
+        if product_counts:
+            mx = max(product_counts.values())
+            for pname, cnt in sorted(product_counts.items(), key=lambda x: -x[1]):
+                rev = product_revenue.get(pname, 0)
+                rev_str = f"{rev:,}".replace(",", " ") + " ₽" if rev else ""
+                w = round(cnt / mx * 100) if mx else 0
+                sales_html += f"""
+<div style="margin-bottom:10px">
+  <div style="display:flex;justify-content:space-between;font-size:13px">
+    <span style="max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{pname}</span>
+    <span style="font-weight:600;color:#4a64f5">{cnt}
+      <span style="color:#bbb;font-weight:400"> · {rev_str}</span></span>
+  </div>
+  <div style="background:#f0f0f0;border-radius:6px;height:8px;margin-top:4px">
+    <div style="background:#4a64f5;width:{w}%;height:8px;border-radius:6px;
+        min-width:{min(w,3)}px"></div></div>
+</div>"""
+
+    return f"""
+<h2 style="font-size:13px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;
+    color:#888;margin:0 0 16px">Каталог продуктов</h2>
+{catalog_html}
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:20px;margin-bottom:12px">
+  <div style="background:#fff;border-radius:14px;padding:18px 16px;border:1.5px solid #eee">
+    <h3 style="font-size:11px;font-weight:600;letter-spacing:1.4px;text-transform:uppercase;
+        color:#999;margin:0 0 10px">🔗 Диплинки бота</h3>
+    {deeplinks_html}
+  </div>
+  <div style="background:#fff;border-radius:14px;padding:18px 16px;border:1.5px solid #eee">
+    <h3 style="font-size:11px;font-weight:600;letter-spacing:1.4px;text-transform:uppercase;
+        color:#999;margin:0 0 10px">⌨️ Ключевые слова</h3>
+    {keywords_html}
+  </div>
+</div>
+
+<div style="background:#fff;border-radius:14px;padding:18px 16px;border:1.5px solid #eee;
+    margin-bottom:12px">
+  <h3 style="font-size:11px;font-weight:600;letter-spacing:1.4px;text-transform:uppercase;
+      color:#999;margin:0 0 14px">💳 Продажи Tribute</h3>
+  {sales_html}
+</div>
+<p style="font-size:11px;color:#bbb">* Данные из Tribute API — показывает все оплаченные заказы</p>
+"""
+
+
 PERIOD_LABELS = {
     "all":   "Всё время",
     "today": "Сегодня",
@@ -383,19 +691,19 @@ PERIOD_LABELS = {
 }
 
 
-def _render(bot_html: str, site_html: str, updated: str, token: str = "",
-            tab: str = "bot", period: str = "all") -> str:
-    active_bot  = " active" if tab != "site" else ""
-    active_site = " active" if tab == "site" else ""
+def _render(bot_html: str, site_html: str, products_html: str, updated: str,
+            token: str = "", tab: str = "bot", period: str = "all") -> str:
+    active_bot      = " active" if tab == "bot" else ""
+    active_site     = " active" if tab == "site" else ""
+    active_products = " active" if tab == "products" else ""
 
     def _period_btn(p: str) -> str:
         cls = "period active" if p == period else "period"
         return (f'<a class="{cls}" href="?token={token}&tab={tab}&period={p}">'
                 f'{PERIOD_LABELS[p]}</a>')
 
-    # Фильтр периода применяется к обеим вкладкам:
-    # — для бота через `created_time` лидов в Notion;
-    # — для сайта через дневные хеши Redis `psycology_events:YYYY-MM-DD`.
+    # Фильтр периода применяется к бот и сайт вкладкам;
+    # вкладка «Продукты» скрывает бар периода.
     period_bar = (
         '<div class="period-bar" id="periodBar">' +
         "".join(_period_btn(p) for p in ("all", "today", "7d", "30d")) +
@@ -444,6 +752,7 @@ def _render(bot_html: str, site_html: str, updated: str, token: str = "",
     <div class="tabs">
       <button class="tab{active_bot}" onclick="switchTab('bot',this)">🤖 Бот</button>
       <button class="tab{active_site}" onclick="switchTab('site',this)">🌐 Сайт</button>
+      <button class="tab{active_products}" onclick="switchTab('products',this)">📦 Продукты</button>
     </div>
     <small>Notion · {updated}</small>
   </div>
@@ -453,15 +762,27 @@ def _render(bot_html: str, site_html: str, updated: str, token: str = "",
 <div class="content">
   <div id="pane-bot" class="tab-pane{active_bot}">{bot_html}</div>
   <div id="pane-site" class="tab-pane{active_site}">{site_html}</div>
+  <div id="pane-products" class="tab-pane{active_products}">{products_html}</div>
 </div>
 <script>
 const TOKEN = {json.dumps(token)};
 const PERIOD = {json.dumps(period)};
+// Скрываем период-бар при первоначальной загрузке на вкладке «Продукты»
+(function() {{
+  const active = document.querySelector('.tab-pane.active');
+  if (active && active.id === 'pane-products') {{
+    const pb = document.getElementById('periodBar');
+    if (pb) pb.style.display = 'none';
+  }}
+}})();
 function switchTab(name, btn) {{
   document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.getElementById('pane-' + name).classList.add('active');
   btn.classList.add('active');
+  // Скрываем фильтр периода на вкладке «Продукты»
+  const pb = document.getElementById('periodBar');
+  if (pb) pb.style.display = (name === 'products') ? 'none' : '';
   // Запоминаем выбранную вкладку, период и в URL, и в кнопке «Обновить»,
   // чтобы refresh ничего не сбрасывал.
   const url = new URL(window.location.href);
@@ -489,12 +810,13 @@ async def dashboard(request: Request, token: str = "", tab: str = "bot", period:
     if token != DASHBOARD_TOKEN:
         return HTMLResponse("<h2 style='padding:40px;font-family:sans-serif'>403 — доступ запрещён</h2>", status_code=403)
     active_period = period if period in ("all", "today", "7d", "30d") else "all"
+    active_tab = tab if tab in ("bot", "site", "products") else "bot"
+
     notion_error: str | None = None
     try:
         notion_stats = await notion_leads.get_stats(period=active_period)
     except Exception as e:
         logger.error("dashboard notion error: %s", e)
-        # Полный текст идёт в логи; в UI показываем короткий хинт + advice.
         notion_error = str(e).split(":", 1)[0][:60]
         notion_stats = {"total": 0, "period": active_period}
 
@@ -502,7 +824,19 @@ async def dashboard(request: Request, token: str = "", tab: str = "bot", period:
         updated = f"⚠️ Notion временно недоступен ({notion_error}) · обновите через минуту"
     else:
         updated = notion_stats.get("updated_at", "—")
-    active_tab = tab if tab in ("bot", "site") else "bot"
+
     site_stats = await _stats.get_site_stats(active_period)
-    return HTMLResponse(_render(_bot_tab(notion_stats), _site_tab(site_stats),
-                                 updated, token, active_tab, active_period))
+
+    # Tribute sales загружаем только если открыта вкладка «Продукты»,
+    # чтобы не замедлять рендер бот/сайт вкладок.
+    if active_tab == "products":
+        sales_data = await _fetch_tribute_sales()
+    else:
+        sales_data = {"items": [], "_deferred": True}
+
+    return HTMLResponse(_render(
+        _bot_tab(notion_stats),
+        _site_tab(site_stats),
+        _products_tab(sales_data),
+        updated, token, active_tab, active_period,
+    ))
