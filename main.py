@@ -422,9 +422,12 @@ async def _fetch_tribute_sales() -> dict:
                     last_error = f"HTTP {r.status_code} ({endpoint})"
                     continue
                 data = r.json()
+                raw_snippet = json.dumps(data, ensure_ascii=False)[:500]
+                logger.info("tribute %s raw: %s", endpoint, raw_snippet)
                 # Tribute может вернуть список или объект с items/orders/data
                 if isinstance(data, list):
                     items = data
+                    raw_saved = raw_snippet
                 else:
                     items = (
                         data.get("items")
@@ -432,6 +435,7 @@ async def _fetch_tribute_sales() -> dict:
                         or data.get("data")
                         or []
                     )
+                    raw_saved = raw_snippet
                 if isinstance(items, list):
                     all_items.extend(items)
             except Exception as e:
@@ -440,7 +444,7 @@ async def _fetch_tribute_sales() -> dict:
 
     if not all_items and last_error:
         return {"error": last_error, "items": []}
-    return {"items": all_items, "total": len(all_items)}
+    return {"items": all_items, "total": len(all_items), "_raw": locals().get("raw_saved", "")}
 
 
 # ── Products tab ───────────────────────────────────────────────────────────────
@@ -655,6 +659,9 @@ def _products_tab(sales_data: dict) -> str:
         )
 
     # ── Sales section ──────────────────────────────────────────────────────
+    # Отладочный дамп сырого ответа — покажем в UI пока не заработало
+    debug_raw = sales_data.get("_raw", "")
+
     if deferred:
         sales_html = (
             '<p style="color:#888;font-size:13px">Нажмите 🔄 Обновить — '
@@ -662,12 +669,27 @@ def _products_tab(sales_data: dict) -> str:
         )
     elif sales_error:
         sales_html = (
-            f'<p style="color:#ee7258;font-size:13px">⚠️ Ошибка загрузки: {sales_error}</p>'
+            f'<p style="color:#ee7258;font-size:13px">⚠️ Ошибка: {sales_error}</p>'
             f'<p style="font-size:11px;color:#bbb;margin-top:6px">'
-            f'Убедитесь, что переменная TRIBUTE_API_KEY задана в Railway Variables.</p>'
+            f'Нужен отдельный REST API ключ: Tribute → Настройки → ⋯ → API Keys → Generate<br>'
+            f'Добавьте как <code>TRIBUTE_API_KEY</code> в Railway Variables.</p>'
         )
     elif total_sales == 0:
-        sales_html = '<p style="color:#aaa;font-size:13px">Продаж пока нет.</p>'
+        sales_html = (
+            '<p style="color:#aaa;font-size:13px">API вернул 0 заказов.</p>'
+            '<p style="font-size:11px;color:#bbb;margin-top:6px">'
+            'Возможно, используется ключ для вебхуков вместо REST API ключа.<br>'
+            'Проверьте: Tribute → Настройки → ⋯ → <b>API Keys</b> → Generate — '
+            'и замените <code>TRIBUTE_API_KEY</code> в Railway на новый ключ.</p>'
+        )
+        if debug_raw:
+            sales_html += (
+                f'<details style="margin-top:10px"><summary style="font-size:11px;color:#aaa;cursor:pointer">'
+                f'Сырой ответ API (для отладки)</summary>'
+                f'<pre style="font-size:10px;color:#888;overflow:auto;max-height:200px;'
+                f'background:#f9f9f9;padding:8px;border-radius:6px;margin-top:6px">'
+                f'{debug_raw[:2000]}</pre></details>'
+            )
     else:
         sales_html = f"""
 <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
@@ -693,6 +715,13 @@ def _products_tab(sales_data: dict) -> str:
 </div>"""
 
     return f"""
+<div style="background:#fff;border-radius:14px;padding:18px 16px;
+    border:1.5px solid #eee;border-left:4px solid #4a64f5;margin-bottom:20px">
+  <h3 style="font-size:11px;font-weight:600;letter-spacing:1.4px;text-transform:uppercase;
+      color:#999;margin:0 0 14px">💳 Продажи Tribute</h3>
+  {sales_html}
+</div>
+
 <h2 style="font-size:13px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;
     color:#888;margin:0 0 16px">Каталог продуктов</h2>
 {catalog_html}
@@ -709,14 +738,7 @@ def _products_tab(sales_data: dict) -> str:
     {keywords_html}
   </div>
 </div>
-
-<div style="background:#fff;border-radius:14px;padding:18px 16px;border:1.5px solid #eee;
-    margin-bottom:12px">
-  <h3 style="font-size:11px;font-weight:600;letter-spacing:1.4px;text-transform:uppercase;
-      color:#999;margin:0 0 14px">💳 Продажи Tribute</h3>
-  {sales_html}
-</div>
-<p style="font-size:11px;color:#bbb">* Данные из Tribute API — показывает все оплаченные заказы</p>
+<p style="font-size:11px;color:#bbb">* Продажи — Tribute API · заказы загружаются при открытии вкладки</p>
 """
 
 
