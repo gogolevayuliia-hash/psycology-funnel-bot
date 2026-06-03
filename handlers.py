@@ -62,6 +62,18 @@ _photo_cache: dict[str, str] = {}  # path → file_id
 
 GUIDE_PDF_PATH = os.path.join(BASE_DIR, "guide.pdf")
 
+
+def _file_md5(path: str) -> str:
+    """MD5 первых 64 КБ файла — быстрая инвалидация кэша при замене файла."""
+    import hashlib
+    h = hashlib.md5()
+    try:
+        with open(path, "rb") as f:
+            h.update(f.read(65536))
+    except Exception:
+        return ""
+    return h.hexdigest()
+
 KNOWN_SOURCES = {
     "tiktok": "TikTok", "instagram": "Instagram",
     "youtube": "YouTube", "telegram": "Telegram",
@@ -171,9 +183,10 @@ async def send_guide(chat_id: int, reply_markup=None) -> bool:
     if reply_markup:
         payload["reply_markup"] = reply_markup
     try:
-        # Аналогично send_photo: память → Redis → upload.
+        # Ключ кэша включает хэш файла — при замене guide.pdf кэш автоматически сбрасывается.
+        cache_key = f"{GUIDE_PDF_PATH}:{_file_md5(GUIDE_PDF_PATH)}"
         if not _guide_file_id:
-            cached = await _stats.file_id_get(GUIDE_PDF_PATH)
+            cached = await _stats.file_id_get(cache_key)
             if cached:
                 _guide_file_id = cached
         if _guide_file_id:
@@ -190,7 +203,7 @@ async def send_guide(chat_id: int, reply_markup=None) -> bool:
                                 files={"document": f})
             if r.get("ok"):
                 _guide_file_id = r["result"]["document"]["file_id"]
-                asyncio.create_task(_stats.file_id_set(GUIDE_PDF_PATH, _guide_file_id))
+                asyncio.create_task(_stats.file_id_set(cache_key, _guide_file_id))
             else:
                 logger.error("sendDocument failed: %s", r)
         return r.get("ok", False)
