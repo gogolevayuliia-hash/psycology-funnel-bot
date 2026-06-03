@@ -513,7 +513,7 @@ async def _handle_message(message: dict) -> None:
                     user_id, username, param, entry, source)
         # Глубокие ссылки — считаем переходы. Учитываем агрегатно по entry,
         # чтобы club_tiktok и club_practicum попадали в один counter «club».
-        _DEEPLINK_KEYS = {"deptest", "quiz", "talk", "articles", "guide", "escape", "psy", "club"}
+        _DEEPLINK_KEYS = {"deptest", "quiz", "talk", "articles", "guide", "escape", "psy", "club", "tests"}
         if entry in _DEEPLINK_KEYS:
             _stats.deeplinks[entry] += 1
 
@@ -556,6 +556,13 @@ async def _handle_message(message: dict) -> None:
             asyncio.create_task(notion_leads.audit_upsert(
                 user_id=user_id, username=username,
                 status="Получил гайд", source=source, request="клуб (deeplink)",
+            ))
+        elif entry == "tests":
+            await _show_persistent_menu(chat_id)
+            await send(chat_id, "Выберите тест 👇", reply_markup=_tests_menu_kb())
+            asyncio.create_task(notion_leads.audit_upsert(
+                user_id=user_id, username=username,
+                status="Зашёл", source=source, request="тесты (deeplink)",
             ))
         else:
             await _welcome(chat_id, user_id, username, source)
