@@ -550,37 +550,11 @@ def _file_updated(path: str | None) -> str:
 
 
 def _products_tab(sales_data: dict) -> str:
-    deferred = sales_data.get("_deferred")
-    # ── Tribute sales analysis ─────────────────────────────────────────────
-    sales_error = sales_data.get("error")
-    items = sales_data.get("items", []) or []
-    # Попробуем разные ключи: items / orders / data
-    if not items:
-        items = sales_data.get("orders", []) or sales_data.get("data", []) or []
-
-    total_sales = len(items)
-    total_revenue = 0
-    product_counts: dict[str, int] = {}
-    product_revenue: dict[str, int] = {}
-
-    for order in items:
-        amount = (
-            order.get("amount") or order.get("price") or
-            order.get("sum") or 0
-        )
-        try:
-            amount = int(float(str(amount)))
-        except Exception:
-            amount = 0
-        total_revenue += amount
-
-        # Название продукта
-        pname = (
-            order.get("product_title") or order.get("product_name") or
-            order.get("title") or order.get("name") or "—"
-        )
-        product_counts[pname] = product_counts.get(pname, 0) + 1
-        product_revenue[pname] = product_revenue.get(pname, 0) + amount
+    # ── Продажи из локальной статистики ──────────────────────────────────
+    product_counts:  dict[str, int] = sales_data.get("_counts", {})
+    product_revenue: dict[str, int] = sales_data.get("_revenue", {})
+    total_sales   = sum(product_counts.values())
+    total_revenue = sum(product_revenue.values())
 
     # ── Products catalog ───────────────────────────────────────────────────
     catalog_html = ""
@@ -659,37 +633,13 @@ def _products_tab(sales_data: dict) -> str:
         )
 
     # ── Sales section ──────────────────────────────────────────────────────
-    # Отладочный дамп сырого ответа — покажем в UI пока не заработало
-    debug_raw = sales_data.get("_raw", "")
-
-    if deferred:
+    if total_sales == 0:
         sales_html = (
-            '<p style="color:#888;font-size:13px">Нажмите 🔄 Обновить — '
-            'данные загрузятся при открытии вкладки «Продукты».</p>'
+            '<p style="color:#aaa;font-size:13px">Продаж пока нет.</p>'
+            '<p style="font-size:11px;color:#bbb;margin-top:4px">'
+            'Счётчик работает с момента этого деплоя — каждая новая покупка '
+            'через Tribute будет здесь автоматически.</p>'
         )
-    elif sales_error:
-        sales_html = (
-            f'<p style="color:#ee7258;font-size:13px">⚠️ Ошибка: {sales_error}</p>'
-            f'<p style="font-size:11px;color:#bbb;margin-top:6px">'
-            f'Нужен отдельный REST API ключ: Tribute → Настройки → ⋯ → API Keys → Generate<br>'
-            f'Добавьте как <code>TRIBUTE_API_KEY</code> в Railway Variables.</p>'
-        )
-    elif total_sales == 0:
-        sales_html = (
-            '<p style="color:#aaa;font-size:13px">API вернул 0 заказов.</p>'
-            '<p style="font-size:11px;color:#bbb;margin-top:6px">'
-            'Возможно, используется ключ для вебхуков вместо REST API ключа.<br>'
-            'Проверьте: Tribute → Настройки → ⋯ → <b>API Keys</b> → Generate — '
-            'и замените <code>TRIBUTE_API_KEY</code> в Railway на новый ключ.</p>'
-        )
-        if debug_raw:
-            sales_html += (
-                f'<details style="margin-top:10px"><summary style="font-size:11px;color:#aaa;cursor:pointer">'
-                f'Сырой ответ API (для отладки)</summary>'
-                f'<pre style="font-size:10px;color:#888;overflow:auto;max-height:200px;'
-                f'background:#f9f9f9;padding:8px;border-radius:6px;margin-top:6px">'
-                f'{debug_raw[:2000]}</pre></details>'
-            )
     else:
         sales_html = f"""
 <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
@@ -886,12 +836,14 @@ async def dashboard(request: Request, token: str = "", tab: str = "bot", period:
 
     site_stats = await _stats.get_site_stats(active_period)
 
-    # Tribute sales загружаем только если открыта вкладка «Продукты»,
-    # чтобы не замедлять рендер бот/сайт вкладок.
-    if active_tab == "products":
-        sales_data = await _fetch_tribute_sales()
-    else:
-        sales_data = {"items": [], "_deferred": True}
+    # Продажи берём из локальной статистики (пишется при каждом вебхуке Tribute).
+    # Tribute API не отдаёт историю цифровых продуктов — только физических товаров.
+    sales_data = {
+        "items":   [],  # не используется — берём из _stats.sales напрямую
+        "total":   sum(_stats.sales.values()),
+        "_counts": dict(_stats.sales),
+        "_revenue": dict(_stats.sales_revenue),
+    }
 
     return HTMLResponse(_render(
         _bot_tab(notion_stats),

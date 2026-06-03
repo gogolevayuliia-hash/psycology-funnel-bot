@@ -1094,20 +1094,27 @@ async def handle_tribute_purchase(tg_id: int, payload: dict) -> None:
 
     sent = await _send_lesson_pdf(tg_id)
 
-    # Уведомление администратора
     # Данные покупки лежат внутри payload["payload"]
     p = payload.get("payload", payload)
     product_title = p.get("product_name") or "видеоурок"
-    amount        = p.get("amount", "—")
+    amount_raw    = p.get("amount", 0)
     username      = p.get("telegram_username") or ""
     tg_info       = f"@{username}" if username else f"id{tg_id}"
     status = "✅ PDF отправлен" if sent else "❌ Не удалось отправить PDF (добавьте lesson.pdf в бот)"
+
+    # Записываем продажу в статистику дашборда
+    try:
+        amount_int = int(float(str(amount_raw))) if amount_raw else 0
+    except Exception:
+        amount_int = 0
+    asyncio.create_task(_stats.record_sale_async(product_title, amount_int))
+    asyncio.create_task(_stats.save_async())
 
     await notify_admin(
         f"💳 <b>Новая покупка на Tribute!</b>\n\n"
         f"👤 {tg_info} (<code>{tg_id}</code>)\n"
         f"📦 {product_title}\n"
-        f"💰 {amount} ₽\n"
+        f"💰 {amount_raw} ₽\n"
         f"{status}"
     )
 

@@ -51,6 +51,9 @@ site_sources: Counter   = Counter()
 site_pageviews: list    = [0]
 since: list             = [_now()]
 
+sales: Counter          = Counter()  # product_name → количество продаж
+sales_revenue: Counter  = Counter()  # product_name → сумма выручки (руб)
+
 
 # ── Redis helpers ─────────────────────────────────────────────────────────────
 
@@ -211,6 +214,8 @@ def _to_dict() -> dict:
         "site_pageviews": site_pageviews[0],
         "since":          since[0],
         "saved_at":       _now(),
+        "sales":          dict(sales),
+        "sales_revenue":  dict(sales_revenue),
     }
 
 
@@ -223,6 +228,8 @@ def _from_dict(data: dict) -> None:
     saved_since = data.get("since")
     if saved_since:
         since[0] = saved_since
+    sales.update(data.get("sales", {}))
+    sales_revenue.update(data.get("sales_revenue", {}))
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -336,6 +343,16 @@ async def get_site_stats(period: str = "all") -> dict:
         "since":     since[0],
         "period":    period,
     }
+
+
+async def record_sale_async(product_name: str, amount: int) -> None:
+    """Записывает факт продажи. Персистируется в Redis и файл."""
+    sales[product_name] += 1
+    sales_revenue[product_name] += amount
+    # Атомарно пишем в Redis (переживёт рестарт)
+    safe = product_name.replace(" ", "_")[:60]
+    await _redis_hincrby(f"sale_cnt:{safe}", 1)
+    await _redis_hincrby(f"sale_rev:{safe}", amount)
 
 
 async def save_async() -> None:
