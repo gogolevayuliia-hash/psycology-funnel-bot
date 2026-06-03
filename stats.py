@@ -346,13 +346,29 @@ async def get_site_stats(period: str = "all") -> dict:
 
 
 async def record_sale_async(product_name: str, amount: int) -> None:
-    """Записывает факт продажи. Персистируется в Redis и файл."""
+    """Записывает факт продажи. Персистируется в Redis и файл.
+    amount — сумма ДО вычета комиссии Tribute (цена покупателя).
+    """
     sales[product_name] += 1
     sales_revenue[product_name] += amount
     # Атомарно пишем в Redis (переживёт рестарт)
     safe = product_name.replace(" ", "_")[:60]
     await _redis_hincrby(f"sale_cnt:{safe}", 1)
     await _redis_hincrby(f"sale_rev:{safe}", amount)
+
+
+async def seed_historical_sales(history: list[tuple[str, int]]) -> None:
+    """Заполняет исторические продажи при первом запуске (если счётчик пустой).
+    history: список (product_name, amount_before_tribute_fee).
+    Запускается один раз — если sales уже не пустой, ничего не делает.
+    """
+    if sum(sales.values()) > 0:
+        return
+    for product_name, amount in history:
+        sales[product_name] += 1
+        sales_revenue[product_name] += amount
+    logger.info("stats: seeded %d historical sales", len(history))
+    await save_async()
 
 
 async def save_async() -> None:

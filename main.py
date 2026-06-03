@@ -51,9 +51,25 @@ async def _autosave_loop() -> None:
         logger.info("stats: autosaved")
 
 
+_HISTORICAL_SALES: list[tuple[str, int]] = [
+    # (название продукта, цена ДО вычета комиссии Tribute)
+    # Данные из Tribute за период до 3.06.2026 (введены вручную)
+    ("Видеоурок «Точка побега»",          990),  # Vasiliy Solyanik, 2 июн, 891 получено
+    ("Видеоурок «Точка побега»",          594),  # Lina, 27 мая, 534.60 получено
+    ("Видеоурок «Точка побега»",          594),  # Anastasia, 27 мая
+    ("Видеоурок «Точка побега»",          594),  # Руслан, 27 мая
+    ("Видеоурок «Точка побега»",          594),  # Никита Новеньков, 26 мая
+    ("Видеоурок «Точка побега»",          594),  # Natalia Morozova, 24 мая
+    ("Видеоурок «Точка побега»",          594),  # Vladislav Bystrov, 23 мая
+    ("Видеоурок «Точка побега»",          594),  # Archikatt, 23 мая
+    ("Видеоурок «Нам надо поговорить»",   990),  # аноним, 1 июн, 891 получено
+]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await _stats.load_async()              # загружаем сохранённые данные (Redis → файл)
+    await _stats.seed_historical_sales(_HISTORICAL_SALES)  # стартовые данные (один раз)
     await set_webhook()
     task = asyncio.create_task(_autosave_loop())
     yield
@@ -641,10 +657,12 @@ def _products_tab(sales_data: dict) -> str:
             'через Tribute будет здесь автоматически.</p>'
         )
     else:
+        received = round(total_revenue * 0.9)
         sales_html = f"""
 <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
   {_big(total_sales, "Продаж всего", "#4a64f5")}
-  {_big(f"{total_revenue:,}".replace(",", " ") + " ₽", "Выручка", "#62d6c3")}
+  {_big(f"{total_revenue:,}".replace(",", " ") + " ₽", "Выручка (до комиссии)", "#62d6c3")}
+  {_big(f"{received:,}".replace(",", " ") + " ₽", "Получено (−10% Tribute)", "#f4956b")}
 </div>"""
         if product_counts:
             mx = max(product_counts.values())
@@ -688,7 +706,7 @@ def _products_tab(sales_data: dict) -> str:
     {keywords_html}
   </div>
 </div>
-<p style="font-size:11px;color:#bbb">* Продажи — Tribute API · заказы загружаются при открытии вкладки</p>
+<p style="font-size:11px;color:#bbb">* Суммы до вычета 10% комиссии Tribute · история с 23.05.2026 · новые продажи пишутся автоматически через вебхук</p>
 """
 
 
