@@ -240,7 +240,7 @@ def _main_menu():
 def _videos_menu_kb():
     """Список всех видеоуроков."""
     return {"inline_keyboard": [
-        [{"text": "🎬 Нам надо поговорить. Только не так. — 990 ₽", "callback_data": "show_video_lesson"}],
+        [{"text": "🎬 Нам надо поговорить. Только не так. — 742 ₽ (скидка 25%) 🎁", "callback_data": "show_video_lesson"}],
         [{"text": "🧠 Точка побега — 742 ₽ (скидка 25% для бота) 🎁", "callback_data": "show_escape_lesson"}],
         [{"text": "💔 Эмоциональный голод — скидка 40% до выхода", "callback_data": "show_hunger_lesson"}],
         [{"text": "← Главное меню", "callback_data": "back_to_menu"}],
@@ -250,7 +250,7 @@ def _videos_menu_kb():
 def _video_lesson_kb():
     """Кнопка покупки урока «Нам надо поговорить»."""
     return {"inline_keyboard": [
-        [{"text": "🎬 Купить урок — 990 ₽", "url": TRIPWIRE_URL}],
+        [{"text": "🎬 Купить со скидкой 25% — 742 ₽", "url": TRIPWIRE_URL}],
         [{"text": "← Все видео", "callback_data": "show_videos"}],
     ]}
 
