@@ -513,7 +513,7 @@ async def _handle_message(message: dict) -> None:
                     user_id, username, param, entry, source)
         # Глубокие ссылки — считаем переходы. Учитываем агрегатно по entry,
         # чтобы club_tiktok и club_practicum попадали в один counter «club».
-        _DEEPLINK_KEYS = {"deptest", "quiz", "talk", "articles", "guide", "escape", "psy", "club", "tests"}
+        _DEEPLINK_KEYS = {"deptest", "quiz", "talk", "articles", "guide", "escape", "buyescape", "psy", "club", "tests"}
         if entry in _DEEPLINK_KEYS:
             _stats.deeplinks[entry] += 1
 
@@ -535,6 +535,12 @@ async def _handle_message(message: dict) -> None:
         elif entry == "escape":
             await _show_persistent_menu(chat_id)
             await _start_escape_quiz(chat_id, user_id)
+        elif entry == "buyescape":
+            # Сразу на страницу покупки «Точка побега» — для рекламных постов
+            _stats.bot["escape_lesson"] += 1
+            await _show_persistent_menu(chat_id)
+            await send_photo(chat_id, "images/schema_escape.png")
+            await send(chat_id, ESCAPE_LESSON_TEXT, reply_markup=_escape_lesson_kb())
         elif entry == "articles":
             await _show_persistent_menu(chat_id)
             await _show_articles_menu(chat_id)
