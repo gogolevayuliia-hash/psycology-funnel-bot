@@ -267,6 +267,55 @@ def _big(n, label: str, color: str, sub: str = "") -> str:
     )
 
 
+def _campaigns_block(campaigns_by_name: dict, entry_labels: dict) -> str:
+    """HTML-блок «📣 Посты и кампании» для вкладки Бот.
+
+    campaigns_by_name: { "painpost": {"psy": 3, "escape": 7}, ... }
+    entry_labels:      { "psy": "🩺 Психолог", ... }
+    """
+    if not campaigns_by_name:
+        return ""
+
+    cards_html = ""
+    for camp_name, entries in sorted(campaigns_by_name.items()):
+        total_clicks = sum(entries.values())
+        mx = max(entries.values()) or 1
+        rows_html = ""
+        for entry_key, cnt in sorted(entries.items(), key=lambda x: -x[1]):
+            label = entry_labels.get(entry_key, entry_key)
+            w = round(cnt / mx * 100)
+            rows_html += (
+                f'<div style="margin-bottom:8px">'
+                f'<div style="display:flex;justify-content:space-between;font-size:12px">'
+                f'<span>{label}</span>'
+                f'<span style="font-weight:600;color:#4a64f5">{cnt}</span>'
+                f'</div>'
+                f'<div style="background:#f0f0f0;border-radius:4px;height:6px;margin-top:3px">'
+                f'<div style="background:#4a64f5;width:{w}%;height:6px;border-radius:4px;'
+                f'min-width:{min(w,3)}px"></div></div>'
+                f'</div>'
+            )
+        cards_html += (
+            f'<div style="background:#fff;border-radius:14px;padding:16px;'
+            f'border:1.5px solid #eee;border-left:4px solid #f4956b">'
+            f'<div style="display:flex;justify-content:space-between;align-items:center;'
+            f'margin-bottom:12px">'
+            f'<span style="font-size:12px;font-weight:700;letter-spacing:1px;'
+            f'text-transform:uppercase;color:#f4956b">#{camp_name}</span>'
+            f'<span style="font-size:20px;font-weight:800;color:#1a1a1a">{total_clicks}</span>'
+            f'</div>'
+            f'{rows_html}'
+            f'</div>'
+        )
+
+    return (
+        f'<h3 style="font-size:11px;font-weight:600;letter-spacing:1.4px;'
+        f'text-transform:uppercase;color:#999;margin:0 0 10px">📣 Посты и кампании (сессия)</h3>'
+        f'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));'
+        f'gap:12px;margin-bottom:12px">{cards_html}</div>'
+    )
+
+
 def _bot_tab(s: dict) -> str:
     total = s.get("total", 0)
     period = s.get("period", "all")
@@ -313,6 +362,27 @@ def _bot_tab(s: dict) -> str:
     deeplink_rows = {k: v for k, v in deeplink_rows.items() if v > 0}
     dl_total = sum(deeplink_rows.values()) or 1
 
+    # ── Кампании ────────────────────────────────────────────────────────────
+    # _stats.campaigns содержит ключи вида "painpost:psy", "painpost:escape" и т.д.
+    # Группируем по campaign_name (часть до ":"), внутри каждой — entry-разбивка.
+    _ENTRY_LABELS = {
+        "psy":     "🩺 Психолог",
+        "escape":  "🚪 Точка побега",
+        "guide":   "📄 Гайд",
+        "quiz":    "🧠 Тест привязанности",
+        "talk":    "💬 Тест разговора",
+        "deptest": "💔 Эм. голод",
+        "club":    "🔒 Клуб",
+        "start":   "↩ Просто старт",
+    }
+    campaigns_by_name: dict[str, dict[str, int]] = {}
+    for key, cnt in _stats.campaigns.items():
+        if ":" in key:
+            camp, entry_key = key.split(":", 1)
+        else:
+            camp, entry_key = key, "start"
+        campaigns_by_name.setdefault(camp, {})[entry_key] = cnt
+
     funnel_title = (
         "Воронка (всего в Notion)" if period == "all"
         else f"Воронка · {period_label}"
@@ -346,6 +416,7 @@ def _bot_tab(s: dict) -> str:
   {_card("🖱 Нажатия кнопок (сессия)", _rows(bot_rows, bot_total, "#4a64f5"))}
   {_card("🔗 Переходы по ссылкам (сессия)", _rows(deeplink_rows, dl_total, "#f4956b"))}
 </div>
+{_campaigns_block(campaigns_by_name, _ENTRY_LABELS)}
 <p style="font-size:11px;color:#bbb">* Нажатия кнопок и переходы по ссылкам бота — статистика сессии, обнуляется при деплое</p>
 """
 

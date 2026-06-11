@@ -517,6 +517,12 @@ async def _handle_message(message: dict) -> None:
         if entry in _DEEPLINK_KEYS:
             _stats.deeplinks[entry] += 1
 
+        # Кампания = source не из стандартных соц.сетей, считаем отдельно
+        # Ключ: "<source>:<entry>" — напр. "painpost:psy", "painpost:escape"
+        _KNOWN_SOCIAL_SOURCES = set(KNOWN_SOURCES.values()) | {"Прямой"}
+        if source not in _KNOWN_SOCIAL_SOURCES:
+            _stats.campaigns[f"{source}:{entry or 'start'}"] += 1
+
         if entry == "deptest":
             await _show_persistent_menu(chat_id)
             await _start_dep_quiz(chat_id, user_id)
