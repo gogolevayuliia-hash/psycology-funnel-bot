@@ -934,9 +934,19 @@ async def dashboard(request: Request, token: str = "", tab: str = "bot", period:
         "_revenue": dict(_stats.sales_revenue),
     }
 
-    return HTMLResponse(_render(
-        _bot_tab(notion_stats),
-        _site_tab(site_stats),
-        _products_tab(sales_data),
-        updated, token, active_tab, active_period,
-    ))
+    import traceback
+    try:
+        return HTMLResponse(_render(
+            _bot_tab(notion_stats),
+            _site_tab(site_stats),
+            _products_tab(sales_data),
+            updated, token, active_tab, active_period,
+        ))
+    except Exception as e:
+        tb = traceback.format_exc()
+        logger.error("dashboard render error: %s\n%s", e, tb)
+        return HTMLResponse(
+            f"<pre style='padding:40px;font-family:monospace;font-size:13px'>"
+            f"<b>Dashboard render error:</b>\n{tb}</pre>",
+            status_code=500,
+        )
