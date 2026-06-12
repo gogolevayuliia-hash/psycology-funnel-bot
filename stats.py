@@ -54,6 +54,8 @@ since: list             = [_now()]
 sales: Counter          = Counter()  # product_name → количество продаж
 sales_revenue: Counter  = Counter()  # product_name → сумма выручки (руб)
 
+campaigns: Counter      = Counter()  # campaign_name:entry → переходы (напр. "painpost:psy")
+
 
 # ── Redis helpers ─────────────────────────────────────────────────────────────
 
@@ -216,6 +218,7 @@ def _to_dict() -> dict:
         "saved_at":       _now(),
         "sales":          dict(sales),
         "sales_revenue":  dict(sales_revenue),
+        "campaigns":      dict(campaigns),
     }
 
 
@@ -230,6 +233,7 @@ def _from_dict(data: dict) -> None:
         since[0] = saved_since
     sales.update(data.get("sales", {}))
     sales_revenue.update(data.get("sales_revenue", {}))
+    campaigns.update(data.get("campaigns", {}))
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
