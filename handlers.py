@@ -25,6 +25,11 @@ from conversation_quiz import (
     QUESTIONS as TALK_Q, RESULTS as TALK_R,
     calculate_result as talk_result,
 )
+from conversation_quiz_v2 import (
+    QUESTIONS_V2 as TALK_V2_Q, RESULTS_V2 as TALK_V2_R,
+    EXHAUSTION_QUESTION_V2, CTA_TEXT_V2, TALK_V2_URL,
+    calculate_result_v2 as talk_v2_result,
+)
 from escape_quiz import (
     QUESTIONS as ESC_Q, RESULTS as ESC_R,
     calculate_result as escape_result,
@@ -295,7 +300,8 @@ def _tests_menu_kb():
         [{"text": "🧠 Тип привязанности", "callback_data": "start_quiz"}],
         [{"text": "🚪 Точка побега: как вы уходите от себя", "callback_data": "start_escape_quiz"}],
         [{"text": "💔 Эмоциональный голод", "callback_data": "start_dep_quiz"}],
-        [{"text": "💬 Как вы говорите в конфликте", "callback_data": "start_talk_quiz"}],
+        [{"text": "💬 Как вы говорите в конфликте (расширенный)", "callback_data": "start_talk_v2_quiz"}],
+        [{"text": "💬 Как вы говорите в конфликте (короткий)", "callback_data": "start_talk_quiz"}],
     ]}
 
 
@@ -365,6 +371,29 @@ def _talk_result_kb():
     return {"inline_keyboard": [
         [{"text": "🎬 Урок про разговоры — подробнее", "callback_data": "show_video_lesson"}],
         [{"text": "🔒 Предзапись в клуб", "callback_data": "join_club"}],
+    ]}
+
+
+def _talk_v2_quiz_kb(q_index: int):
+    q = TALK_V2_Q[q_index]
+    return {"inline_keyboard": [
+        [{"text": LETTERS[i], "callback_data": f"tq2_{q_index}_{i}"}]
+        for i in range(len(q["options"]))
+    ]}
+
+
+def _talk_v2_exhaustion_kb():
+    opts = EXHAUSTION_QUESTION_V2["options"]
+    return {"inline_keyboard": [
+        [{"text": opts[i], "callback_data": f"tqex_{i}"}]
+        for i in range(len(opts))
+    ]}
+
+
+def _talk_v2_result_kb():
+    return {"inline_keyboard": [
+        [{"text": "▶️ Смотреть урок со скидкой →", "url": TALK_V2_URL}],
+        [{"text": "📣 Подписаться на канал", "url": "https://t.me/gogolevajuls"}],
     ]}
 
 
@@ -513,7 +542,7 @@ async def _handle_message(message: dict) -> None:
                     user_id, username, param, entry, source)
         # Глубокие ссылки — считаем переходы. Учитываем агрегатно по entry,
         # чтобы club_tiktok и club_practicum попадали в один counter «club».
-        _DEEPLINK_KEYS = {"deptest", "quiz", "talk", "articles", "guide", "escape", "buyescape", "psy", "club", "tests"}
+        _DEEPLINK_KEYS = {"deptest", "quiz", "talk", "talkv2", "articles", "guide", "escape", "buyescape", "psy", "club", "tests"}
         if entry in _DEEPLINK_KEYS:
             _stats.deeplinks[entry] += 1
 
@@ -532,6 +561,9 @@ async def _handle_message(message: dict) -> None:
         elif entry == "talk":
             await _show_persistent_menu(chat_id)
             await _start_talk_quiz(chat_id, user_id)
+        elif entry == "talkv2":
+            await _show_persistent_menu(chat_id)
+            await _start_talk_v2_quiz(chat_id, user_id)
         elif entry == "escape":
             await _show_persistent_menu(chat_id)
             await _start_escape_quiz(chat_id, user_id)
@@ -710,6 +742,18 @@ async def _handle_callback(cb: dict) -> None:
     elif data.startswith("tq_"):
         _, q_idx, opt_idx = data.split("_")
         await _process_talk_answer(chat_id, user_id, int(q_idx), int(opt_idx))
+
+    elif data == "start_talk_v2_quiz":
+        _stats.bot["quiz_talk_v2"] += 1
+        await _start_talk_v2_quiz(chat_id, user_id)
+
+    elif data.startswith("tq2_"):
+        _, q_idx, opt_idx = data.split("_")
+        await _process_talk_v2_answer(chat_id, user_id, int(q_idx), int(opt_idx))
+
+    elif data.startswith("tqex_"):
+        opt_idx = int(data.split("_")[1])
+        await _process_talk_v2_exhaustion(chat_id, user_id, opt_idx)
 
     elif data == "start_escape_quiz":
         _stats.bot["quiz_escape"] += 1
@@ -944,6 +988,76 @@ async def _process_talk_answer(chat_id: int, user_id: int,
             status="Получил гайд", source=source,
             request="тест разговора", talk_pattern=pattern,
         ))
+
+
+# ── Conversation quiz v2 (Готтман, пороговая система) ────────────────────────
+
+async def _start_talk_v2_quiz(chat_id: int, user_id: int) -> None:
+    prev = user_state.get(user_id, {})
+    user_state[user_id] = {**prev, "step": "talk_quiz_v2",
+                            "tq2_answers": [], "tq2_index": 0}
+    await send_photo(
+        chat_id, "images/talk_cover.png",
+        caption=(
+            "💬 <b>Тест «Как вы разговариваете в конфликте»</b>\n\n"
+            "Джон Готтман 40 лет изучал пары в лаборатории — с датчиками, видеозаписями "
+            "и биометрией. Он выделил четыре паттерна, которые разрушают разговор — часто "
+            "ещё до того, как вы успели сказать что-то важное.\n\n"
+            "Почти у всех нас есть несколько из них. Одновременно.\n\n"
+            "9 вопросов. Выбирайте первую реакцию — не то, что кажется правильным."
+        ),
+    )
+    await send(chat_id, _build_question_text(TALK_V2_Q[0]), reply_markup=_talk_v2_quiz_kb(0))
+
+
+async def _process_talk_v2_answer(chat_id: int, user_id: int,
+                                   q_index: int, opt_index: int) -> None:
+    state = user_state.get(user_id, {})
+    if state.get("step") != "talk_quiz_v2" or state.get("tq2_index") != q_index:
+        return
+
+    opt = TALK_V2_Q[q_index]["options"][opt_index]
+    atype, score = opt[1], opt[2]
+    state["tq2_answers"].append((atype, score))
+    next_idx = q_index + 1
+
+    if next_idx < len(TALK_V2_Q):
+        state["tq2_index"] = next_idx
+        await send(chat_id, _build_question_text(TALK_V2_Q[next_idx]),
+                   reply_markup=_talk_v2_quiz_kb(next_idx))
+    else:
+        # Все 9 вопросов пройдены — переходим к разведочному вопросу
+        user_state[user_id] = {**state, "step": "talk_quiz_v2_exhaust"}
+        await send(chat_id, EXHAUSTION_QUESTION_V2["text"],
+                   reply_markup=_talk_v2_exhaustion_kb())
+
+
+async def _process_talk_v2_exhaustion(chat_id: int, user_id: int, opt_index: int) -> None:
+    state = user_state.get(user_id, {})
+    if state.get("step") != "talk_quiz_v2_exhaust":
+        return
+
+    # Сохраняем ответ на разведочный вопрос (без баллов)
+    exhaustion_label = EXHAUSTION_QUESTION_V2["options"][opt_index]
+    answers = state.get("tq2_answers", [])
+    pattern_key = talk_v2_result(answers)
+    source = state.get("source", "Прямой")
+
+    user_state[user_id] = {**state, "step": None,
+                            "talk_v2_pattern": pattern_key,
+                            "talk_v2_exhaustion": exhaustion_label}
+
+    r = TALK_V2_R[pattern_key]
+    await send_photo(chat_id, r["image"])
+    await send(chat_id, f"<b>{r['title']}</b>\n\n{r['text']}",
+               reply_markup=_talk_v2_result_kb())
+    await send(chat_id, CTA_TEXT_V2, reply_markup=_talk_v2_result_kb())
+
+    asyncio.create_task(notion_leads.audit_upsert(
+        user_id=user_id, username=None,
+        status="Получил гайд", source=source,
+        request="тест разговора v2", talk_pattern=pattern_key,
+    ))
 
 
 # ── Escape quiz («Точка побега») ─────────────────────────────────────────────

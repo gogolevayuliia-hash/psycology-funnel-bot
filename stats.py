@@ -40,11 +40,11 @@ def _now() -> str:
 
 # ── Счётчики (in-memory, всегда актуальны) ────────────────────────────────────
 bot: Counter = Counter()
-# quiz_attachment | quiz_deprivation | quiz_talk | guide | psychologist |
+# quiz_attachment | quiz_deprivation | quiz_talk | quiz_talk_v2 | guide | psychologist |
 # video_lesson | articles | club | protocol | start
 
 deeplinks: Counter = Counter()
-# quiz | deptest | talk | articles
+# quiz | deptest | talk | talkv2 | articles
 
 site_clicks: Counter    = Counter()
 site_sources: Counter   = Counter()
