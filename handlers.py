@@ -816,6 +816,8 @@ async def _deliver_guide(chat_id: int, user_id: int, username: str | None,
                           source: str, request: str) -> None:
     ok = await send_guide(chat_id, reply_markup=_after_guide_kb())
     if ok:
+        await send(chat_id, CHANNEL_INVITE_TEXT,
+                   reply_markup={"inline_keyboard": [[{"text": "📣 Подписаться на канал", "url": CHANNEL_URL}]]})
         asyncio.create_task(notion_leads.audit_upsert(
             user_id=user_id, username=username,
             status="Получил гайд", source=source, request=request,
@@ -1052,6 +1054,8 @@ async def _process_talk_v2_exhaustion(chat_id: int, user_id: int, opt_index: int
     await send(chat_id, f"<b>{r['title']}</b>\n\n{r['text']}",
                reply_markup=_talk_v2_result_kb())
     await send(chat_id, CTA_TEXT_V2, reply_markup=_talk_v2_result_kb())
+    await send(chat_id, CHANNEL_INVITE_TEXT,
+               reply_markup={"inline_keyboard": [[{"text": "📣 Подписаться на канал", "url": CHANNEL_URL}]]})
 
     asyncio.create_task(notion_leads.audit_upsert(
         user_id=user_id, username=None,
