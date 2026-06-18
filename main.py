@@ -339,7 +339,9 @@ def _bot_tab(s: dict) -> str:
         "🚪 Тест «Точка побега»":    b["quiz_escape"],
         "💔 Тест «Эмоциональный голод»": b["quiz_deprivation"],
         "💬 Тест на разговор":       b["quiz_talk"],
-        "📄 Гайд":                   b["guide"],
+        "💬 Тест разговора v2":      b["quiz_talk_v2"],
+        "📄 Гайд «Анатомия»":        b["guide"],
+        "📖 Гайд «Переводчик»":      b["translator_guide"],
         "🎬 Видеоурок (детали)":     b["video_lesson"],
         "🩺 Психолог":               b["psychologist"],
         "🔒 Клуб":                   b["club"],
@@ -354,8 +356,10 @@ def _bot_tab(s: dict) -> str:
         "🚪 Точка побега":           dl["escape"],
         "💔 Эмоциональный голод":    dl["deptest"],
         "💬 Тест разговора":         dl["talk"],
+        "💬 Тест разговора v2":      dl["talkv2"],
         "📚 Рубрикатор постов":      dl["articles"],
-        "📄 Гайд":                   dl["guide"],
+        "📄 Гайд «Анатомия»":        dl["guide"],
+        "📖 Гайд «Переводчик»":      dl["translator"],
         "🩺 Психолог":               dl["psy"],
         "🔒 Клуб «Кубики Жизни»":    dl["club"],
     }
@@ -366,14 +370,16 @@ def _bot_tab(s: dict) -> str:
     # _stats.campaigns содержит ключи вида "painpost:psy", "painpost:escape" и т.д.
     # Группируем по campaign_name (часть до ":"), внутри каждой — entry-разбивка.
     _ENTRY_LABELS = {
-        "psy":     "🩺 Психолог",
-        "escape":  "🚪 Точка побега",
-        "guide":   "📄 Гайд",
-        "quiz":    "🧠 Тест привязанности",
-        "talk":    "💬 Тест разговора",
-        "deptest": "💔 Эм. голод",
-        "club":    "🔒 Клуб",
-        "start":   "↩ Просто старт",
+        "psy":        "🩺 Психолог",
+        "escape":     "🚪 Точка побега",
+        "guide":      "📄 Гайд «Анатомия»",
+        "translator": "📖 Гайд «Переводчик»",
+        "quiz":       "🧠 Тест привязанности",
+        "talk":       "💬 Тест разговора",
+        "talkv2":     "💬 Тест разговора v2",
+        "deptest":    "💔 Эм. голод",
+        "club":       "🔒 Клуб",
+        "start":      "↩ Просто старт",
     }
     campaigns_by_name: dict[str, dict[str, int]] = {}
     for key, cnt in _stats.campaigns.items():
@@ -407,7 +413,10 @@ def _bot_tab(s: dict) -> str:
 </div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
   {_card("🚪 Точка побега", _rows(s.get("escape",{}), total, "#cc4f35"))}
-  {_card("💬 Тест на разговор", _rows(s.get("talk",{}), total, "#62d6c3"))}
+  {_card("💬 Тест разговора v1 (Notion)", _rows(s.get("talk",{}), total, "#62d6c3"))}
+</div>
+<div style="margin-bottom:12px">
+  {_card("💬 Тест разговора v2 — паттерны (сессия)", _rows(dict(_stats.talk_v2_patterns), sum(_stats.talk_v2_patterns.values()) or 1, "#62d6c3"))}
 </div>
 <div style="margin-bottom:12px">
   {_card("📚 Популярные рубрики", _rows(s.get("rubrics",{}), total, "#f4956b"))}
@@ -539,6 +548,19 @@ async def _fetch_tribute_sales() -> dict:
 _BOT_NAME = "gogolevajuls_bot"
 
 _PRODUCTS = [
+    {
+        "emoji": "📖",
+        "name": "Гайд «Переводчик с мужского»",
+        "type": "Lead magnet",
+        "price": "Бесплатно",
+        "link": None,
+        "file": LESSON_PDF_PATH.replace("lesson.pdf", "guide_translator.pdf"),
+        "file_label": "guide_translator.pdf",
+        "keyword": "переводчик",
+        "status": "✅ Активен",
+        "color": "#f4956b",
+        "deeplink": "translator",
+    },
     {
         "emoji": "📄",
         "name": "Гайд «Как перестать срываться на близких»",

@@ -30,3 +30,6 @@ TRIBUTE_API_KEY = os.environ.get("TRIBUTE_API_KEY", "")
 # Путь к PDF шпаргалке видеоурока (отправляется покупателям)
 # Абсолютный путь — работает независимо от рабочей директории Railway
 LESSON_PDF_PATH = os.path.join(os.path.dirname(__file__), "lesson.pdf")
+
+# Путь к гайду «Переводчик с мужского» (лид-магнит)
+TRANSLATOR_GUIDE_PATH = os.path.join(os.path.dirname(__file__), "guide_translator.pdf")

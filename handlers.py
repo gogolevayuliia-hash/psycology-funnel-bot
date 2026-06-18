@@ -15,7 +15,7 @@ import httpx
 # Абсолютный путь к директории бота — работает на Railway независимо от CWD
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-from config import MARKETING_BOT_TOKEN, ADMIN_CHAT_ID, GUIDE_KEYWORD, TRIPWIRE_URL, ESCAPE_LESSON_URL, HUNGER_LESSON_URL, CHANNEL_URL
+from config import MARKETING_BOT_TOKEN, ADMIN_CHAT_ID, GUIDE_KEYWORD, TRIPWIRE_URL, ESCAPE_LESSON_URL, HUNGER_LESSON_URL, CHANNEL_URL, TRANSLATOR_GUIDE_PATH
 from quiz import QUESTIONS as QUIZ_Q, RESULTS as QUIZ_R, calculate_result as quiz_result
 from deprivation_quiz import (
     QUESTIONS as DEP_Q, RESULTS as DEP_R, PROTOCOL_DESCRIPTION,
@@ -40,6 +40,7 @@ from texts import (
     PSYCHOLOGIST_TEXT, PSYCHOLOGIST_URL, PROTOCOL_CONFIRMED,
     FALLBACK, SITE_URL, CHANNEL_INVITE_TEXT, VIDEO_LESSON_TEXT,
     LESSON_DELIVERY_CAPTION, ESCAPE_LESSON_TEXT, HUNGER_LESSON_TEXT,
+    TRANSLATOR_GUIDE_CAPTION,
 )
 from config import LESSON_PDF_PATH
 import notion_leads
@@ -217,6 +218,42 @@ async def send_guide(chat_id: int, reply_markup=None) -> bool:
         return False
 
 
+_translator_file_id: str | None = None
+
+async def send_guide_translator(chat_id: int, reply_markup=None) -> bool:
+    global _translator_file_id
+    caption = TRANSLATOR_GUIDE_CAPTION
+    payload = {"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    try:
+        cache_key = f"{TRANSLATOR_GUIDE_PATH}:{_file_md5(TRANSLATOR_GUIDE_PATH)}"
+        if not _translator_file_id:
+            cached = await _stats.file_id_get(cache_key)
+            if cached:
+                _translator_file_id = cached
+        if _translator_file_id:
+            r = await _api("sendDocument", json={**payload, "document": _translator_file_id})
+        else:
+            upload_payload = {**payload}
+            if "reply_markup" in upload_payload:
+                upload_payload["reply_markup"] = json.dumps(
+                    upload_payload["reply_markup"], ensure_ascii=False
+                )
+            with open(TRANSLATOR_GUIDE_PATH, "rb") as f:
+                r = await _api("sendDocument", data=upload_payload,
+                                files={"document": f})
+            if r.get("ok"):
+                _translator_file_id = r["result"]["document"]["file_id"]
+                asyncio.create_task(_stats.file_id_set(cache_key, _translator_file_id))
+            else:
+                logger.error("sendDocument translator failed: %s", r)
+        return r.get("ok", False)
+    except Exception as e:
+        logger.error("send_guide_translator error: %s", e)
+        return False
+
+
 async def notify_admin(text: str) -> None:
     try:
         await send(int(ADMIN_CHAT_ID), text)
@@ -309,6 +346,13 @@ def _after_guide_kb():
     return {"inline_keyboard": [
         [{"text": "🧠 Пройти тест на тип привязанности", "callback_data": "start_quiz"}],
         [{"text": "🔒 Предзапись в клуб", "callback_data": "join_club"}],
+    ]}
+
+
+def _after_translator_kb():
+    return {"inline_keyboard": [
+        [{"text": "💬 Пройти тест: как вы говорите в конфликте", "callback_data": "start_talk_v2_quiz"}],
+        [{"text": "📣 Подписаться на канал", "url": CHANNEL_URL}],
     ]}
 
 
@@ -542,7 +586,7 @@ async def _handle_message(message: dict) -> None:
                     user_id, username, param, entry, source)
         # Глубокие ссылки — считаем переходы. Учитываем агрегатно по entry,
         # чтобы club_tiktok и club_practicum попадали в один counter «club».
-        _DEEPLINK_KEYS = {"deptest", "quiz", "talk", "talkv2", "articles", "guide", "escape", "buyescape", "psy", "club", "tests"}
+        _DEEPLINK_KEYS = {"deptest", "quiz", "talk", "talkv2", "articles", "guide", "translator", "escape", "buyescape", "psy", "club", "tests"}
         if entry in _DEEPLINK_KEYS:
             _stats.deeplinks[entry] += 1
 
@@ -581,6 +625,9 @@ async def _handle_message(message: dict) -> None:
             # чтобы человеку не приходилось искать кнопку.
             await _show_persistent_menu(chat_id)
             await _deliver_guide(chat_id, user_id, username, source, "гайд (deeplink)")
+        elif entry == "translator":
+            await _show_persistent_menu(chat_id)
+            await _deliver_translator_guide(chat_id, user_id, username, source, "переводчик (deeplink)")
         elif entry == "psy":
             # Сразу выводим блок «Запись к психологу».
             _stats.bot["psychologist"] += 1
@@ -621,6 +668,11 @@ async def _handle_message(message: dict) -> None:
     if low == GUIDE_KEYWORD.lower():
         source = state.get("source", "Прямой")
         await _deliver_guide(chat_id, user_id, username, source, "гайд")
+        return
+
+    if low in ("переводчик", "translator"):
+        source = state.get("source", "Прямой")
+        await _deliver_translator_guide(chat_id, user_id, username, source, "переводчик")
         return
 
     if low == "тест":
@@ -815,6 +867,21 @@ async def _welcome(chat_id: int, user_id: int, username: str | None,
 async def _deliver_guide(chat_id: int, user_id: int, username: str | None,
                           source: str, request: str) -> None:
     ok = await send_guide(chat_id, reply_markup=_after_guide_kb())
+    if ok:
+        await send(chat_id, CHANNEL_INVITE_TEXT,
+                   reply_markup={"inline_keyboard": [[{"text": "📣 Подписаться на канал", "url": CHANNEL_URL}]]})
+        asyncio.create_task(notion_leads.audit_upsert(
+            user_id=user_id, username=username,
+            status="Получил гайд", source=source, request=request,
+        ))
+    else:
+        await send(chat_id, "Произошла ошибка при отправке файла. Попробуйте позже.")
+
+
+async def _deliver_translator_guide(chat_id: int, user_id: int, username: str | None,
+                                     source: str, request: str) -> None:
+    _stats.bot["translator_guide"] += 1
+    ok = await send_guide_translator(chat_id, reply_markup=_after_translator_kb())
     if ok:
         await send(chat_id, CHANNEL_INVITE_TEXT,
                    reply_markup={"inline_keyboard": [[{"text": "📣 Подписаться на канал", "url": CHANNEL_URL}]]})
@@ -1048,6 +1115,7 @@ async def _process_talk_v2_exhaustion(chat_id: int, user_id: int, opt_index: int
     user_state[user_id] = {**state, "step": None,
                             "talk_v2_pattern": pattern_key,
                             "talk_v2_exhaustion": exhaustion_label}
+    _stats.talk_v2_patterns[pattern_key] += 1
 
     r = TALK_V2_R[pattern_key]
     await send_photo(chat_id, r["image"])

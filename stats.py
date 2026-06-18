@@ -40,8 +40,8 @@ def _now() -> str:
 
 # ── Счётчики (in-memory, всегда актуальны) ────────────────────────────────────
 bot: Counter = Counter()
-# quiz_attachment | quiz_deprivation | quiz_talk | quiz_talk_v2 | guide | psychologist |
-# video_lesson | articles | club | protocol | start
+# quiz_attachment | quiz_deprivation | quiz_talk | quiz_talk_v2 | guide | translator_guide |
+# psychologist | video_lesson | articles | club | protocol | start
 
 deeplinks: Counter = Counter()
 # quiz | deptest | talk | talkv2 | articles
@@ -55,6 +55,8 @@ sales: Counter          = Counter()  # product_name → количество п�
 sales_revenue: Counter  = Counter()  # product_name → сумма выручки (руб)
 
 campaigns: Counter      = Counter()  # campaign_name:entry → переходы (напр. "painpost:psy")
+
+talk_v2_patterns: Counter = Counter()  # pattern_key → количество результатов теста разговора v2
 
 
 # ── Redis helpers ─────────────────────────────────────────────────────────────
