@@ -265,7 +265,8 @@ async def notify_admin(text: str) -> None:
 
 def _main_menu():
     return {"inline_keyboard": [
-        # Лид-магнит
+        # Лид-магниты
+        [{"text": "📖 Гайд «Переводчик с мужского»", "callback_data": "get_translator"}],
         [{"text": "🎁 Гайд — как перестать срываться", "callback_data": "get_guide"}],
         # Бесплатный контент
         [{"text": "🧪 Тесты", "callback_data": "show_tests"},
@@ -719,7 +720,10 @@ async def _handle_callback(cb: dict) -> None:
     state = user_state.get(user_id, {})
     source = state.get("source", "Прямой")
 
-    if data == "get_guide":
+    if data == "get_translator":
+        await _deliver_translator_guide(chat_id, user_id, username, source, "кнопка меню")
+
+    elif data == "get_guide":
         _stats.bot["guide"] += 1
         await _deliver_guide(chat_id, user_id, username, source, "кнопка меню")
 
