@@ -277,6 +277,9 @@ def _main_menu():
         # Сервисы
         [{"text": "📅 Психолог", "callback_data": "psychologist"},
          {"text": "🌐 Сайт", "url": SITE_URL}],
+        # Внешние боты
+        [{"text": "🚀 Микрошаг", "callback_data": "show_mikroshag",
+          "style": "primary"}],
     ]}
 
 
@@ -720,7 +723,21 @@ async def _handle_callback(cb: dict) -> None:
     state = user_state.get(user_id, {})
     source = state.get("source", "Прямой")
 
-    if data == "get_translator":
+    if data == "show_mikroshag":
+        await send(
+            chat_id,
+            "🚀 <b>Микрошаг</b>\n\n"
+            "Проведу вас от «хочу, но не делаю» до новых привычек — за 10 минут. "
+            "И буду рядом каждый день.\n\n"
+            "Метод WOOP, план «если-то», ежедневный трекинг — всё по науке, без давления.",
+            reply_markup={"inline_keyboard": [[
+                {"text": '🚀 Запустить "Микрошаг"',
+                 "url": "https://t.me/super_micro_step_bot",
+                 "style": "primary"}
+            ]]},
+        )
+
+    elif data == "get_translator":
         await _deliver_translator_guide(chat_id, user_id, username, source, "кнопка меню")
 
     elif data == "get_guide":
