@@ -21,6 +21,10 @@ import notion_leads
 import stats as _stats
 
 logging.basicConfig(level=logging.INFO)
+# httpx на INFO печатает полный URL каждого запроса, а токен бота — часть пути
+# (BASE ниже). Без этой строки токен уходит открытым текстом в docker logs на каждый
+# вызов Bot API. Поймано 19.08.2026 на живых логах CT 110.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 BASE = f"https://api.telegram.org/bot{MARKETING_BOT_TOKEN}"
@@ -29,18 +33,47 @@ _processed_updates: set[int] = set()
 _MAX_CACHE = 1000
 
 
+def webhook_url_from(public_url: str) -> str:
+    """Собирает адрес вебхука из PUBLIC_URL в любом разумном написании.
+
+    Принимает `funnel.gogolevajuls.org`, `https://funnel.gogolevajuls.org`,
+    со слешем на конце и уже с `/webhook` — результат всегда один и тот же.
+    """
+    url = public_url.strip().rstrip("/")
+    if "://" not in url:
+        url = f"https://{url}"
+    if url.endswith("/webhook"):
+        return url
+    return f"{url}/webhook"
+
+
 async def set_webhook() -> None:
-    webhook_url = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
-    if not webhook_url:
-        logger.warning("RAILWAY_PUBLIC_DOMAIN not set — webhook not configured")
+    """Ставит вебхук на СЕБЯ при старте — по явному PUBLIC_URL.
+
+    Фолбэка на RAILWAY_PUBLIC_DOMAIN сознательно нет: эту переменную Railway подставляет
+    сам, и любая копия там при рестарте отбирала бы вебхук у боевой (так переезд на CT 110
+    и сорвался дважды — 06.08 и 17.08.2026). Нет PUBLIC_URL → копия вебхук не трогает.
+    """
+    public_url = os.environ.get("PUBLIC_URL")
+    if not public_url:
+        logger.warning("PUBLIC_URL not set — webhook not configured")
         return
-    url = f"https://{webhook_url}/webhook"
+    url = webhook_url_from(public_url)
+    payload: dict = {
+        "url": url,
+        "max_connections": 40,
+        # НЕ отбрасываем очередь: иначе каждый рестарт молча съедает всё,
+        # что пользователи написали, пока бот перезапускался.
+        "drop_pending_updates": False,
+    }
+    secret = os.environ.get("WEBHOOK_SECRET")
+    if secret:
+        payload["secret_token"] = secret
     async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.post(
-            f"{BASE}/setWebhook",
-            json={"url": url, "max_connections": 40, "drop_pending_updates": True},
-        )
-        logger.info("setWebhook → %s", r.json())
+        r = await client.post(f"{BASE}/setWebhook", json=payload)
+        # Логируем только результат: в URL запроса лежит токен бота.
+        logger.info("setWebhook → %s (url=%s, secret=%s)",
+                    r.json(), url, "yes" if secret else "no")
 
 
 async def _autosave_loop() -> None:
@@ -88,6 +121,13 @@ async def _safe_handle(update: dict) -> None:
         _processed_updates.add(update_id)
         if len(_processed_updates) > _MAX_CACHE:
             _processed_updates.discard(min(_processed_updates))
+        # Второй уровень — общий Redis. Множество выше живёт в памяти процесса и
+        # обнуляется при рестарте, а Telegram после рестарта до-доставляет очередь
+        # заново (мы больше не просим её отбрасывать). Без общей отметки пользователь
+        # получил бы урок дважды, а счётчики продаж задвоились бы.
+        if not await _stats.claim_update(update_id):
+            logger.info("update %s уже обработан — пропускаем", update_id)
+            return
     try:
         await handlers.handle_update(update)
     except Exception as e:
@@ -96,6 +136,13 @@ async def _safe_handle(update: dict) -> None:
 
 @app.post("/webhook")
 async def webhook(request: Request):
+    # Эндпоинт публичный (Cloudflare Tunnel), поэтому при заданном WEBHOOK_SECRET
+    # принимаем только запросы с заголовком, который Telegram шлёт по setWebhook.
+    # Секрет не задан → ведём себя как раньше, чтобы выкат не зависел от порядка шагов.
+    secret = os.environ.get("WEBHOOK_SECRET")
+    if secret and request.headers.get("X-Telegram-Bot-Api-Secret-Token") != secret:
+        logger.warning("webhook: неверный secret_token — запрос отклонён")
+        return JSONResponse({"ok": False}, status_code=403)
     try:
         update = await request.json()
         asyncio.create_task(_safe_handle(update))

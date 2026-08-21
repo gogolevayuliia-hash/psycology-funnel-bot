@@ -1,0 +1,4 @@
+# Только для локального прогона тестов. В прод-образ НЕ едет —
+# Dockerfile ставит зависимости из requirements.txt.
+-r requirements.txt
+pytest==8.4.2
