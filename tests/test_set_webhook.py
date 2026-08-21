@@ -48,11 +48,72 @@ def test_нормализация_адреса(public_url):
     assert webhook_url_from(public_url) == "https://funnel.gogolevajuls.org/webhook"
 
 
-@pytest.mark.parametrize("bad", ["", "   ", "https://", "///"])
-def test_пустой_public_url__явная_ошибка(bad):
-    """Раньше пробелы давали 'https:///webhook' и тихий отказ регистрации."""
+@pytest.mark.parametrize("bad", [
+    "", "   ", "https://", "///",
+    ":",                              # давало 'https://:/webhook'
+    "https:/funnel.gogolevajuls.org",  # опечатка в схеме: один слеш
+])
+def test_негодный_public_url__явная_ошибка(bad):
+    """Раньше такие значения давали адрес, который Telegram молча отвергал."""
     with pytest.raises(ValueError):
         webhook_url_from(bad)
+
+
+def test_путь_из_public_url_отбрасывается():
+    """Маршрут в приложении один. Путь из переменной дал бы 404 на каждый апдейт."""
+    assert webhook_url_from("https://funnel.gogolevajuls.org/sub/path") == \
+        "https://funnel.gogolevajuls.org/webhook"
+
+
+def test_сеть_моргнула__три_попытки_и_явная_ошибка(monkeypatch):
+    """Без ретраев транзиентный сбой оставлял вебхук у прежнего владельца навсегда."""
+    attempts = []
+
+    async def flaky_post(self, url, **kw):
+        attempts.append(1)
+        raise ConnectionError("сеть моргнула")
+
+    import httpx
+    monkeypatch.setattr(httpx.AsyncClient, "post", flaky_post, raising=True)
+    monkeypatch.setenv("PUBLIC_URL", "funnel.gogolevajuls.org")
+    # Не ждём бэкофф по-настоящему. Оригинал забираем до подмены, иначе рекурсия.
+    real_sleep = asyncio.sleep
+
+    async def no_wait(_seconds):
+        await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", no_wait)
+
+    with pytest.raises(main.WebhookNotSet):
+        asyncio.run(main.set_webhook())
+
+    assert len(attempts) == 3, f"ждали 3 попытки, было {len(attempts)}"
+
+
+def test_ошибка_от_telegram__повторять_бессмысленно(sent, monkeypatch):
+    """ok:false — осмысленный ответ, ретраи только тянут старт."""
+    monkeypatch.setenv("PUBLIC_URL", "funnel.gogolevajuls.org")
+    sent_holder = sent
+
+    async def bad_post(self, url, **kw):
+        sent_holder.append(kw.get("json") or {})
+        return _FakeResponse2({"ok": False, "error_code": 400, "description": "bad webhook"})
+
+    import httpx
+    monkeypatch.setattr(httpx.AsyncClient, "post", bad_post, raising=True)
+
+    with pytest.raises(main.WebhookNotSet):
+        asyncio.run(main.set_webhook())
+
+    assert len(sent_holder) == 1, "на осмысленную ошибку Telegram не должно быть повторов"
+
+
+class _FakeResponse2:
+    def __init__(self, body):
+        self._body = body
+
+    def json(self):
+        return self._body
 
 
 def test_ставит_вебхук_по_public_url(sent, monkeypatch):

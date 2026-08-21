@@ -109,6 +109,86 @@ def test_переполнение_кеша__выбрасывает_самый_с
 
 # ── Припаркованная копия не портит статистику боевой ──────────────────────────
 
+def test_припаркованная_копия_не_пишет_в_redis_на_старте(monkeypatch, telegram):
+    """seed_historical_sales сохраняет безусловно — и при сорвавшемся чтении снимка
+    затирал бы всю историю продаж нулями. Копия без PUBLIC_URL не должна писать вообще."""
+    monkeypatch.delenv("PUBLIC_URL", raising=False)
+    writes: list[str] = []
+
+    async def fake_load():
+        pass
+
+    async def fake_seed(_sales):
+        writes.append("seed")
+
+    async def fake_save():
+        writes.append("save")
+
+    monkeypatch.setattr(main._stats, "load_async", fake_load)
+    monkeypatch.setattr(main._stats, "seed_historical_sales", fake_seed)
+    monkeypatch.setattr(main._stats, "save_async", fake_save)
+
+    async def run():
+        async with main.lifespan(main.app):
+            pass
+
+    asyncio.run(run())
+
+    assert writes == [], f"припаркованная копия писала в общий Redis: {writes}"
+
+
+def test_фоновая_обработка_дожидается_остановки(monkeypatch, telegram):
+    """Апдейт уже подтверждён 200-м, Telegram его не переспросит —
+    оборвать обработку на середине значит потерять сообщение пользователя."""
+    monkeypatch.setenv("PUBLIC_URL", "funnel.gogolevajuls.org")
+    finished: list[int] = []
+
+    async def slow_handle(update):
+        await asyncio.sleep(0.3)
+        finished.append(update["update_id"])
+
+    async def noop(*a, **kw):
+        pass
+
+    monkeypatch.setattr(main.handlers, "handle_update", slow_handle)
+    monkeypatch.setattr(main._stats, "load_async", noop)
+    monkeypatch.setattr(main._stats, "seed_historical_sales", noop)
+    monkeypatch.setattr(main._stats, "save_async", noop)
+    main._processed_updates.clear()
+
+    async def run():
+        async with main.lifespan(main.app):
+            task = asyncio.create_task(main._safe_handle({"update_id": 777}))
+            main._background.add(task)
+            task.add_done_callback(main._background.discard)
+
+    asyncio.run(run())
+
+    assert finished == [777], "обработку оборвали на выходе — апдейт потерян"
+
+
+def test_health_показывает_немого_бота(monkeypatch):
+    """«Живой, но нем» раньше выглядел как полный порядок — и дважды стоил переезда."""
+    monkeypatch.setenv("PUBLIC_URL", "funnel.gogolevajuls.org")
+    monkeypatch.setattr(main, "_webhook_ok", False)
+
+    r = TestClient(main.app).get("/health")
+
+    assert r.status_code == 503
+    assert r.json()["webhook"] == "not_set"
+
+
+def test_health_ок_у_припаркованной_копии(monkeypatch):
+    """Она вебхук и не должна была ставить — красным гореть не за что."""
+    monkeypatch.delenv("PUBLIC_URL", raising=False)
+    monkeypatch.setattr(main, "_webhook_ok", False)
+
+    r = TestClient(main.app).get("/health")
+
+    assert r.status_code == 200
+    assert r.json()["status"] == "ok"
+
+
 def test_без_public_url__автосохранение_выключено(monkeypatch, caplog):
     """Копия на Railway всю неделю отката иначе затирала бы снимок в общем Redis."""
     monkeypatch.delenv("PUBLIC_URL", raising=False)

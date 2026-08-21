@@ -4,10 +4,11 @@ import hmac
 import json
 import logging
 import os
+import re
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import FastAPI, Request
@@ -41,36 +42,34 @@ _MAX_CACHE = 1000
 # задачу, и сборщик мусора может убить обработку апдейта на середине.
 _background: set[asyncio.Task] = set()
 
+# Удалось ли зарегистрировать вебхук. Отдаётся в /health, чтобы «живой, но немой» бот
+# был виден гейту выката и часовому монитору, а не только человеку по факту тишины.
+_webhook_ok: bool | None = None
+
 
 class WebhookNotSet(RuntimeError):
     """setWebhook не отработал — вебхук остался у прежнего владельца."""
 
 
-def webhook_url_from(public_url: str) -> str:
-    """Собирает адрес вебхука из PUBLIC_URL в любом разумном написании.
+_HOST_RE = re.compile(r"^[A-Za-z0-9.-]+(:\d+)?$")
 
-    Принимает `funnel.gogolevajuls.org`, `https://funnel.gogolevajuls.org`,
-    со слешем на конце, с `?query` и уже с `/webhook` — результат один и тот же.
-    Схему всегда приводим к https: Telegram другие не принимает.
+
+def webhook_url_from(public_url: str) -> str:
+    """Собирает адрес вебхука из PUBLIC_URL.
+
+    Из PUBLIC_URL берём ТОЛЬКО хост: путь оттуда всё равно дал бы 404 на `/webhook`
+    (маршрут в приложении один и регистрозависимый), а схему Telegram принимает
+    исключительно https. Поэтому любой вход сводим к `https://<хост>/webhook`.
     """
     raw = (public_url or "").strip()
     if not raw:
         raise ValueError("PUBLIC_URL пуст")
     if "://" not in raw:
         raw = f"https://{raw}"
-    parts = urlsplit(raw)
-    host = parts.netloc or parts.path.split("/")[0]
-    if not host:
-        raise ValueError(f"в PUBLIC_URL нет хоста: {public_url!r}")
-    path = parts.path if parts.netloc else "/".join(parts.path.split("/")[1:])
-    path = path.rstrip("/")
-    # Маршрут в FastAPI регистрозависимый: `/WEBHOOK` дал бы 404 и немого бота,
-    # поэтому хвост всегда пересобираем в нижнем регистре.
-    if path.lower().endswith("/webhook"):
-        path = path[: -len("/webhook")]
-    path = f"{path}/webhook"
-    # query и fragment отбрасываем сознательно: в адресе вебхука им делать нечего
-    return urlunsplit(("https", host, path, "", ""))
+    host = urlsplit(raw).netloc
+    if not _HOST_RE.match(host or ""):
+        raise ValueError(f"в PUBLIC_URL нет годного хоста: {public_url!r}")
+    return f"https://{host}/webhook"
 
 
 async def set_webhook() -> None:
@@ -95,15 +94,30 @@ async def set_webhook() -> None:
     secret = os.environ.get("WEBHOOK_SECRET")
     if secret:
         payload["secret_token"] = secret
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.post(f"{BASE}/setWebhook", json=payload)
-        # Логируем только результат: в URL запроса лежит токен бота.
-        body = r.json()
-    if not body.get("ok"):
-        # Молчаливый провал здесь — ровно то, из-за чего переезд срывался дважды:
-        # приложение стартовало «успешно», а вебхук оставался у чужой копии.
-        raise WebhookNotSet(f"{body.get('error_code')}: {body.get('description')}")
-    logger.info("setWebhook OK (url=%s, secret=%s)", url, "yes" if secret else "no")
+    # Ретраи: моргнувшая на старте сеть не должна оставлять вебхук у прежнего владельца.
+    # Раньше исключение роняло lifespan, и контейнер перезапускался — то есть повтор
+    # был, пусть и грубый. Убрав падение, повтор надо вернуть явно.
+    last: Exception | None = None
+    for attempt in range(1, 4):
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.post(f"{BASE}/setWebhook", json=payload)
+                # Логируем только результат: в URL запроса лежит токен бота.
+                body = r.json()
+            if not body.get("ok"):
+                # Молчаливый провал здесь — ровно то, из-за чего переезд срывался дважды:
+                # приложение стартовало «успешно», а вебхук оставался у чужой копии.
+                raise WebhookNotSet(f"{body.get('error_code')}: {body.get('description')}")
+            logger.info("setWebhook OK (url=%s, secret=%s)", url, "yes" if secret else "no")
+            return
+        except WebhookNotSet:
+            raise                     # ответ Telegram осмысленный — повтор не поможет
+        except Exception as e:
+            last = e
+            logger.warning("setWebhook попытка %s/3 не удалась: %s", attempt, e)
+            if attempt < 3:
+                await asyncio.sleep(2 ** attempt)
+    raise WebhookNotSet(f"Telegram недоступен после 3 попыток: {last}")
 
 
 async def _autosave_loop() -> None:
@@ -140,22 +154,32 @@ _HISTORICAL_SALES: list[tuple[str, int]] = [
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _webhook_ok
+    # Припаркованная копия (без PUBLIC_URL) не пишет в общий Redis ВООБЩЕ. Проверка
+    # стоит здесь, а не только в автосейве: seed_historical_sales тоже сохраняет, и
+    # при сорвавшемся чтении снимка затирал бы всю историю продаж нулями.
+    is_active = bool(os.environ.get("PUBLIC_URL"))
     await _stats.load_async()              # загружаем сохранённые данные (Redis → файл)
-    await _stats.seed_historical_sales(_HISTORICAL_SALES)  # стартовые данные (один раз)
+    if is_active:
+        await _stats.seed_historical_sales(_HISTORICAL_SALES)  # стартовые данные (один раз)
     # Провал регистрации вебхука не должен ронять приложение: с restart:unless-stopped
     # это бесконечный рестарт-луп, и /health не поднимется вообще. Но и молчать нельзя —
-    # бот будет «жив» и нем, поэтому пишем ошибку и зовём админа.
+    # бот будет «жив» и нем, поэтому помечаем состояние в /health (его видит гейт выката
+    # и часовой монитор) и пробуем позвать админа.
     try:
         await set_webhook()
+        _webhook_ok = True
     except Exception as e:
+        _webhook_ok = False
         logger.error("set_webhook провалился: %s", e)
-        try:
-            await handlers.notify_admin(f"⚠️ Вебхук не зарегистрирован: {e}")
-        except Exception as notify_error:
-            logger.error("не удалось предупредить админа: %s", notify_error)
+        await handlers.notify_admin(f"⚠️ Вебхук не зарегистрирован: {e}")
     task = asyncio.create_task(_autosave_loop())
     yield
-    if os.environ.get("PUBLIC_URL"):       # припаркованная копия снимок не трогает
+    # Дожидаемся фоновых обработчиков: апдейт уже подтверждён 200-м, Telegram его
+    # не переспросит — оборвать обработку на середине значит потерять сообщение.
+    if _background:
+        await asyncio.wait(set(_background), timeout=10)
+    if is_active:
         await _stats.save_async()          # сохраняем при штатном завершении
     task.cancel()
 
@@ -190,7 +214,11 @@ async def webhook(request: Request):
     secret = os.environ.get("WEBHOOK_SECRET")
     if secret:
         got = request.headers.get("X-Telegram-Bot-Api-Secret-Token") or ""
-        if not hmac.compare_digest(got, secret):
+        # Сравниваем БАЙТЫ: compare_digest на строках требует ASCII с обеих сторон,
+        # а заголовок приходит снаружи — на кириллице он бросал TypeError,
+        # и публичный эндпоинт отдавал 500 вместо 403.
+        if not hmac.compare_digest(got.encode("utf-8", "surrogateescape"),
+                                   secret.encode("utf-8")):
             logger.warning("webhook: неверный secret_token — запрос отклонён")
             return JSONResponse({"ok": False}, status_code=403)
     try:
@@ -206,6 +234,14 @@ async def webhook(request: Request):
 
 @app.get("/health")
 async def health():
+    # Копия без PUBLIC_URL припаркована — она и не должна была ставить вебхук.
+    # А вот активная копия с непоставленным вебхуком «жива и нема»: раньше это
+    # выглядело как полный порядок и дважды стоило сорванного переезда.
+    if os.environ.get("PUBLIC_URL") and _webhook_ok is False:
+        return JSONResponse(
+            {"status": "degraded", "bot": "funnel", "webhook": "not_set"},
+            status_code=503,
+        )
     return {"status": "ok", "bot": "funnel"}
 
 

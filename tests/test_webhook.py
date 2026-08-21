@@ -104,3 +104,25 @@ def test_повторный_update_id__обработан_один_раз(client
     assert client.post("/webhook", json={"update_id": 42}).status_code == 200
     assert not event.wait(timeout=0.3), "тот же update_id обработан повторно"
     assert len(seen) == 1
+
+
+@pytest.mark.parametrize("bad_header", [
+    "мусор-кириллицей".encode("utf-8"),
+    b"\xe9\xff",
+    "ключ-с-ёлкой-🎄".encode("utf-8"),
+])
+def test_не_ascii_в_заголовке__403_а_не_500(client, handled, monkeypatch, bad_header):
+    """compare_digest на строках требует ASCII с обеих сторон, а заголовок приходит
+    снаружи: на кириллице публичный эндпоинт отдавал 500 вместо 403.
+
+    Значение передаём БАЙТАМИ — именно так его получает uvicorn, который декодирует
+    заголовки как latin-1. Строкой httpx такое просто не отправит.
+    """
+    event, seen = handled
+    monkeypatch.setenv("WEBHOOK_SECRET", SECRET)
+
+    r = client.post("/webhook", json={"update_id": 5}, headers={HEADER: bad_header})
+
+    assert r.status_code == 403, f"ждали 403, получили {r.status_code}"
+    assert not event.wait(timeout=0.3)
+    assert seen == []
