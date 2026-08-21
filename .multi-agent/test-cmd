@@ -1,1 +1,1 @@
-pytest -q
+sh -c 'PY=$(command -v python3.12 || echo /opt/homebrew/bin/python3.12); [ -x .venv/bin/python ] || { "$PY" -m venv .venv && .venv/bin/pip install -q --upgrade pip && .venv/bin/pip install -q -r requirements-dev.txt; }; .venv/bin/python -m pytest -q'
