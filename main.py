@@ -4,8 +4,10 @@ import hmac
 import json
 import logging
 import os
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from fastapi import FastAPI, Request
@@ -29,22 +31,46 @@ logger = logging.getLogger(__name__)
 
 BASE = f"https://api.telegram.org/bot{MARKETING_BOT_TOKEN}"
 
-_processed_updates: set[int] = set()
+# OrderedDict, а не set: нужно выбрасывать САМЫЙ СТАРЫЙ ключ. Прежний
+# `discard(min(...))` выбрасывал минимальный по значению и падал с TypeError,
+# если среди id оказывалась строка (а /webhook смотрит в интернет).
+_processed_updates: "OrderedDict[int, None]" = OrderedDict()
 _MAX_CACHE = 1000
+
+# Ссылки на живые фоновые задачи: без этого asyncio.create_task не удерживает
+# задачу, и сборщик мусора может убить обработку апдейта на середине.
+_background: set[asyncio.Task] = set()
+
+
+class WebhookNotSet(RuntimeError):
+    """setWebhook не отработал — вебхук остался у прежнего владельца."""
 
 
 def webhook_url_from(public_url: str) -> str:
     """Собирает адрес вебхука из PUBLIC_URL в любом разумном написании.
 
     Принимает `funnel.gogolevajuls.org`, `https://funnel.gogolevajuls.org`,
-    со слешем на конце и уже с `/webhook` — результат всегда один и тот же.
+    со слешем на конце, с `?query` и уже с `/webhook` — результат один и тот же.
+    Схему всегда приводим к https: Telegram другие не принимает.
     """
-    url = public_url.strip().rstrip("/")
-    if "://" not in url:
-        url = f"https://{url}"
-    if url.endswith("/webhook"):
-        return url
-    return f"{url}/webhook"
+    raw = (public_url or "").strip()
+    if not raw:
+        raise ValueError("PUBLIC_URL пуст")
+    if "://" not in raw:
+        raw = f"https://{raw}"
+    parts = urlsplit(raw)
+    host = parts.netloc or parts.path.split("/")[0]
+    if not host:
+        raise ValueError(f"в PUBLIC_URL нет хоста: {public_url!r}")
+    path = parts.path if parts.netloc else "/".join(parts.path.split("/")[1:])
+    path = path.rstrip("/")
+    # Маршрут в FastAPI регистрозависимый: `/WEBHOOK` дал бы 404 и немого бота,
+    # поэтому хвост всегда пересобираем в нижнем регистре.
+    if path.lower().endswith("/webhook"):
+        path = path[: -len("/webhook")]
+    path = f"{path}/webhook"
+    # query и fragment отбрасываем сознательно: в адресе вебхука им делать нечего
+    return urlunsplit(("https", host, path, "", ""))
 
 
 async def set_webhook() -> None:
@@ -72,12 +98,25 @@ async def set_webhook() -> None:
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.post(f"{BASE}/setWebhook", json=payload)
         # Логируем только результат: в URL запроса лежит токен бота.
-        logger.info("setWebhook → %s (url=%s, secret=%s)",
-                    r.json(), url, "yes" if secret else "no")
+        body = r.json()
+    if not body.get("ok"):
+        # Молчаливый провал здесь — ровно то, из-за чего переезд срывался дважды:
+        # приложение стартовало «успешно», а вебхук оставался у чужой копии.
+        raise WebhookNotSet(f"{body.get('error_code')}: {body.get('description')}")
+    logger.info("setWebhook OK (url=%s, secret=%s)", url, "yes" if secret else "no")
 
 
 async def _autosave_loop() -> None:
-    """Сохраняет статистику каждые N секунд."""
+    """Сохраняет статистику каждые N секунд.
+
+    Копия без PUBLIC_URL апдейтов не принимает, её счётчики в памяти заморожены на
+    значениях старта — и, сохраняясь, она затирала бы в общем Redis снимок боевой копии
+    (`save_async` пишет ключ целиком, а не по полям). Поэтому припаркованная копия молчит.
+    """
+    if not os.environ.get("PUBLIC_URL"):
+        logger.warning("PUBLIC_URL not set — автосохранение статистики выключено, "
+                       "чтобы не затирать снимок боевой копии")
+        return
     while True:
         await asyncio.sleep(_stats.SAVE_INTERVAL)
         await _stats.save_async()
@@ -103,10 +142,21 @@ _HISTORICAL_SALES: list[tuple[str, int]] = [
 async def lifespan(app: FastAPI):
     await _stats.load_async()              # загружаем сохранённые данные (Redis → файл)
     await _stats.seed_historical_sales(_HISTORICAL_SALES)  # стартовые данные (один раз)
-    await set_webhook()
+    # Провал регистрации вебхука не должен ронять приложение: с restart:unless-stopped
+    # это бесконечный рестарт-луп, и /health не поднимется вообще. Но и молчать нельзя —
+    # бот будет «жив» и нем, поэтому пишем ошибку и зовём админа.
+    try:
+        await set_webhook()
+    except Exception as e:
+        logger.error("set_webhook провалился: %s", e)
+        try:
+            await handlers.notify_admin(f"⚠️ Вебхук не зарегистрирован: {e}")
+        except Exception as notify_error:
+            logger.error("не удалось предупредить админа: %s", notify_error)
     task = asyncio.create_task(_autosave_loop())
     yield
-    await _stats.save_async()             # сохраняем при штатном завершении
+    if os.environ.get("PUBLIC_URL"):       # припаркованная копия снимок не трогает
+        await _stats.save_async()          # сохраняем при штатном завершении
     task.cancel()
 
 
@@ -115,19 +165,17 @@ app = FastAPI(lifespan=lifespan)
 
 async def _safe_handle(update: dict) -> None:
     update_id = update.get("update_id")
+    # Только целое: /webhook смотрит в интернет, а мусорный id раньше ронял кеш
+    # (`unhashable type`, `'<' not supported between str and int`) и после этого
+    # процесс терял все апдейты до рестарта.
+    if not isinstance(update_id, int) or isinstance(update_id, bool):
+        update_id = None
     if update_id is not None:
         if update_id in _processed_updates:
             return
-        _processed_updates.add(update_id)
+        _processed_updates[update_id] = None
         if len(_processed_updates) > _MAX_CACHE:
-            _processed_updates.discard(min(_processed_updates))
-        # Второй уровень — общий Redis. Множество выше живёт в памяти процесса и
-        # обнуляется при рестарте, а Telegram после рестарта до-доставляет очередь
-        # заново (мы больше не просим её отбрасывать). Без общей отметки пользователь
-        # получил бы урок дважды, а счётчики продаж задвоились бы.
-        if not await _stats.claim_update(update_id):
-            logger.info("update %s уже обработан — пропускаем", update_id)
-            return
+            _processed_updates.popitem(last=False)   # выбрасываем самый старый
     try:
         await handlers.handle_update(update)
     except Exception as e:
@@ -140,12 +188,17 @@ async def webhook(request: Request):
     # принимаем только запросы с заголовком, который Telegram шлёт по setWebhook.
     # Секрет не задан → ведём себя как раньше, чтобы выкат не зависел от порядка шагов.
     secret = os.environ.get("WEBHOOK_SECRET")
-    if secret and request.headers.get("X-Telegram-Bot-Api-Secret-Token") != secret:
-        logger.warning("webhook: неверный secret_token — запрос отклонён")
-        return JSONResponse({"ok": False}, status_code=403)
+    if secret:
+        got = request.headers.get("X-Telegram-Bot-Api-Secret-Token") or ""
+        if not hmac.compare_digest(got, secret):
+            logger.warning("webhook: неверный secret_token — запрос отклонён")
+            return JSONResponse({"ok": False}, status_code=403)
     try:
         update = await request.json()
-        asyncio.create_task(_safe_handle(update))
+        task = asyncio.create_task(_safe_handle(update))
+        # Держим ссылку: иначе сборщик мусора может убить задачу на середине обработки
+        _background.add(task)
+        task.add_done_callback(_background.discard)
     except Exception as e:
         logger.error("Webhook parse error: %s", e)
     return JSONResponse({"ok": True})

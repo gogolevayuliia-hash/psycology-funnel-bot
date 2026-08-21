@@ -28,8 +28,6 @@ REDIS_HASH_KEY = "psycology_bot_stats_counters"  # хеш атомарных с�
 REDIS_FILE_IDS_KEY = "psycology_bot_file_ids"    # хеш { локальный_путь → telegram file_id }
 REDIS_EVENTS_PREFIX = "psycology_events:"        # дневные хеши событий: psycology_events:YYYY-MM-DD
 EVENTS_TTL_SECONDS = 90 * 86400                  # храним сырые дневные счётчики 90 дней
-REDIS_UPDATES_PREFIX = "psycology_update:"       # отметка «апдейт обработан», против повторов
-UPDATE_TTL_SECONDS = 86400                       # Telegram держит недоставленное не дольше суток
 
 # ── Fallback: файл (работает только если есть Railway Volume /data) ───────────
 STATS_FILE    = os.environ.get("STATS_FILE", "/data/stats.json")
@@ -122,35 +120,6 @@ async def _redis_hgetall() -> dict[str, int]:
     except Exception as e:
         logger.warning("stats: redis HGETALL error: %s", e)
         return {}
-
-
-# ── Дедупликация апдейтов Telegram ────────────────────────────────────────────
-
-async def claim_update(update_id: int) -> bool:
-    """Помечает апдейт обработанным. False — если его уже обрабатывали.
-
-    Зачем в Redis, а не только в памяти: множество в процессе обнуляется при рестарте,
-    а Telegram после рестарта до-доставляет очередь заново (с 20.08.2026 мы её не
-    отбрасываем). Без общей отметки повторная доставка = второй урок пользователю,
-    дубль лида в Notion и задвоенные счётчики продаж.
-
-    Redis недоступен → True: лучше обработать повторно, чем молча потерять апдейт.
-    """
-    if not UPSTASH_URL:
-        return True
-    try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            r = await client.post(
-                UPSTASH_URL,
-                headers={"Authorization": f"Bearer {UPSTASH_TOKEN}"},
-                json=["SET", f"{REDIS_UPDATES_PREFIX}{update_id}", "1",
-                      "NX", "EX", str(UPDATE_TTL_SECONDS)],
-            )
-            # Upstash: {"result":"OK"} — заняли, {"result":null} — уже было занято
-            return r.json().get("result") is not None
-    except Exception as e:
-        logger.warning("stats: claim_update %s error: %s", update_id, e)
-        return True
 
 
 # ── Telegram file_id cache (HSET/HGET) ────────────────────────────────────────

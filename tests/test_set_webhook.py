@@ -37,9 +37,22 @@ def sent(monkeypatch):
     "https://funnel.gogolevajuls.org/",
     "https://funnel.gogolevajuls.org/webhook",
     "  funnel.gogolevajuls.org  ",
+    # Telegram принимает только https — схему принудительно выправляем,
+    # иначе setWebhook отвечает «HTTPS url must be provided» и бот остаётся нем
+    "http://funnel.gogolevajuls.org",
+    "HTTPS://funnel.gogolevajuls.org/WEBHOOK",
+    "https://funnel.gogolevajuls.org/webhook?x=1",
+    "https://funnel.gogolevajuls.org//",
 ])
 def test_нормализация_адреса(public_url):
     assert webhook_url_from(public_url) == "https://funnel.gogolevajuls.org/webhook"
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "https://", "///"])
+def test_пустой_public_url__явная_ошибка(bad):
+    """Раньше пробелы давали 'https:///webhook' и тихий отказ регистрации."""
+    with pytest.raises(ValueError):
+        webhook_url_from(bad)
 
 
 def test_ставит_вебхук_по_public_url(sent, monkeypatch):

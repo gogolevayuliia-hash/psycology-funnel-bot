@@ -41,6 +41,9 @@ class NetworkAccessAttempted(AssertionError):
 def no_network(monkeypatch):
     """Любой реальный исходящий запрос роняет тест.
 
+    Патчим `send`, а не `post`/`get`: через него проходят ВСЕ глаголы, включая
+    `client.request(...)` из `notion_leads.py` — единственного модуля, который ходит
+    в боевой Notion. Патч только post/get эту дыру оставлял открытой.
     Тесты, которым нужен httpx, подменяют его сами — поверх этой заглушки.
     """
     import httpx
@@ -50,5 +53,6 @@ def no_network(monkeypatch):
             "тест попытался сделать реальный HTTP-запрос — замокай httpx явно"
         )
 
+    monkeypatch.setattr(httpx.AsyncClient, "send", _boom, raising=True)
     monkeypatch.setattr(httpx.AsyncClient, "post", _boom, raising=True)
     monkeypatch.setattr(httpx.AsyncClient, "get", _boom, raising=True)
